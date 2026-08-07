@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Skill Map prototype: แผนผังทักษะสำหรับอาชีพ Computer Engineer"
+    />
+    <title>Skill Map | Roadmap</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body class="roadmap-page">
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Skill Map home">
+          <span class="brand-mark" aria-hidden="true">SM</span>
+          <span>
+            <strong>Skill Map</strong>
+            <small>Learning Roadmap Prototype</small>
+          </span>
+        </a>
+
+        <div class="topbar-actions">
+          <span class="api-status" id="api-status">
+            <span class="status-dot"></span>
+            Local prototype
+          </span>
+          <button class="button ghost danger" id="reset-button" type="button">
+            รีเซ็ต Progress
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="career-hero" aria-labelledby="career-title">
+          <div class="career-summary">
+            <span class="eyebrow">Career Roadmap</span>
+            <div class="career-title-row">
+              <span class="career-icon" id="career-icon">CE</span>
+              <div>
+                <h1 id="career-title">กำลังโหลด Roadmap...</h1>
+                <p id="career-description"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="rank-card">
+            <div class="rank-avatar" id="rank-avatar" aria-hidden="true">01</div>
+            <div>
+              <span class="eyebrow">Current Rank</span>
+              <strong id="rank-name">Starter</strong>
+              <small id="rank-hint">เริ่มเรียน Skill แรกเพื่อพัฒนา Rank</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="progress-overview" aria-label="ความคืบหน้า">
+          <article class="progress-card career-progress-card">
+            <div class="progress-heading">
+              <div>
+                <span class="eyebrow">Overall Progress</span>
+                <h2>เส้นทางสู่วิศวกรคอมพิวเตอร์</h2>
+              </div>
+              <strong class="progress-number" id="career-progress-value">0%</strong>
+            </div>
+            <div
+              class="progress-track large"
+              role="progressbar"
+              aria-label="Career progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <span id="career-progress-bar"></span>
+            </div>
+            <p id="progress-count">เรียนแล้ว 0 จาก 0 Skills</p>
+          </article>
+
+          <div class="subject-progress-list" id="subject-progress-list"></div>
+        </section>
+
+        <section class="workspace">
+          <div class="map-column">
+            <div class="map-toolbar">
+              <div>
+                <span class="eyebrow">Interactive Skill Map</span>
+                <h2>เลือก Node เพื่อดูรายละเอียด</h2>
+              </div>
+              <div
+                class="subject-filters"
+                id="subject-filters"
+                aria-label="ตัวกรองรายวิชา"
+              ></div>
+            </div>
+
+            <div class="legend" aria-label="คำอธิบายสถานะ">
+              <span><i class="legend-dot completed"></i> เรียนแล้ว</span>
+              <span><i class="legend-dot available"></i> พร้อมเรียน</span>
+              <span><i class="legend-dot locked"></i> ยังล็อก</span>
+              <span><i class="legend-ring"></i> ระบบแนะนำ</span>
+            </div>
+
+            <div class="map-card">
+              <div class="map-scroll" id="map-scroll">
+                <div class="graph-world" id="graph-world">
+                  <div class="level-zone beginner-zone">
+                    <span>Beginner</span>
+                  </div>
+                  <div class="level-zone intermediate-zone">
+                    <span>Intermediate</span>
+                  </div>
+                  <div class="level-zone advanced-zone">
+                    <span>Advanced</span>
+                  </div>
+
+                  <svg
+                    class="edge-layer"
+                    id="edge-layer"
+                    viewBox="0 0 1120 620"
+                    aria-hidden="true"
+                  ></svg>
+                  <div class="node-layer" id="node-layer"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="insight-column">
+            <article class="recommendation-card" id="recommendation-card">
+              <span class="recommendation-kicker">Next Recommendation</span>
+              <h2 id="recommendation-name">กำลังวิเคราะห์...</h2>
+              <p id="recommendation-text">
+                ระบบจะเลือก Skill ที่พร้อมเรียนและมีผลต่อเส้นทางมากที่สุด
+              </p>
+              <button
+                class="button primary full"
+                id="open-recommendation"
+                type="button"
+                disabled
+              >
+                เปิด Skill ที่แนะนำ
+              </button>
+            </article>
+
+            <article class="detail-card" id="detail-card">
+              <div class="empty-detail" id="empty-detail">
+                <span class="empty-icon" aria-hidden="true">⌁</span>
+                <h2>เลือก Skill Node</h2>
+                <p>
+                  กด Node บนแผนที่เพื่อดูพื้นฐานที่ต้องใช้ เทคนิค
+                  การนำไปใช้งานจริง และสร้างเส้นทางเรียน
+                </p>
+              </div>
+              <div class="skill-detail hidden" id="skill-detail"></div>
+            </article>
+
+            <article class="achievement-card">
+              <div class="section-heading-inline">
+                <div>
+                  <span class="eyebrow">Achievements</span>
+                  <h2>ความสำเร็จ</h2>
+                </div>
+                <span id="achievement-count">0/4</span>
+              </div>
+              <div class="achievement-grid" id="achievement-grid"></div>
+            </article>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="loading-overlay" id="loading-overlay">
+      <div class="loader"></div>
+      <p>กำลังวิเคราะห์ Skill Graph...</p>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  </body>
+</html>

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Skill Map prototype: แผนผังทักษะสำหรับอาชีพ Computer Engineer"
+    />
+    <title>Skill Map | หน้าแรก</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anuphan:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/home.css') }}"
+    />
+  </head>
+  <body>
+    <!-- Splash / loading screen shown before the home page content -->
+    <div class="splash-overlay" id="splash-overlay">
+      <div class="splash-mark" aria-hidden="true">SM</div>
+      <div class="loader"></div>
+      <p>กำลังเตรียม Skill Map...</p>
+    </div>
+
+    <div class="home-shell hidden-until-ready" id="home-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Skill Map home">
+          <span class="brand-mark" aria-hidden="true">SM</span>
+          <span>
+            <strong>Skill Map</strong>
+            <small>Learning Roadmap Prototype</small>
+          </span>
+        </a>
+
+        <div class="topbar-actions">
+          <span class="api-status">
+            <span class="status-dot"></span>
+            Local prototype
+          </span>
+        </div>
+      </header>
+
+      <main>
+        <section class="home-hero">
+          <span class="home-badge">
+            <span class="status-dot"></span>
+            YOUR CAREER ROADMAP
+          </span>
+
+          <h1>
+            วางแผนเส้นทางการเรียนรู้
+          </h1>
+          <h1>
+            <span class="accent-text">สู่อาชีพในฝันของคุณ</span>
+          </h1>
+
+          <p class="lede">
+            สำรวจแผนผังทักษะแบบ Interactive ติดตามความคืบหน้า
+            และรับคำแนะนำของ Skill ถัดไปที่ควรเรียน
+            เพื่อพัฒนาไปสู่เป้าหมายอาชีพในฝันของคุณ
+          </p>
+
+          <div class="home-cta-row">
+            <a class="button primary" href="/select-track">เข้าสู่ Skill Map</a>
+            <a class="button ghost" href="#features">ดูรายละเอียด</a>
+          </div>
+        </section>
+
+        <section class="home-features" id="features">
+          <article class="home-feature-card">
+            <div class="home-feature-icon" aria-hidden="true">⌁</div>
+            <h3>แผนผัง Skill แบบ Interactive</h3>
+            <p>
+              มองเห็นความเชื่อมโยงระหว่าง Skill ทั้งหมด
+              พร้อมสถานะต่าง ๆ
+            </p>
+          </article>
+
+          <article class="home-feature-card">
+            <div class="home-feature-icon" aria-hidden="true">%</div>
+            <h3>ติดตามความคืบหน้า</h3>
+            <p>
+              ดูภาพรวมความคืบหน้าของเส้นทาง
+              โดยจะแยกตามรายวิชาแบบเรียลไทม์
+            </p>
+          </article>
+
+          <article class="home-feature-card">
+            <div class="home-feature-icon" aria-hidden="true">➜</div>
+            <h3>คำแนะนำ Skill ถัดไป</h3>
+            <p>
+              ระบบวิเคราะห์และแนะนำ Skill ที่พร้อมเรียน
+              และส่งผลต่อเส้นทางมากที่สุด
+            </p>
+          </article>
+        </section>
+      </main>
+
+      <footer class="home-footer">Skill Map Prototype</footer>
+    </div>
+
+    <script>
+      (function () {
+        var splash = document.getElementById("splash-overlay");
+        var shell = document.getElementById("home-shell");
+
+        function revealHome() {
+          shell.classList.remove("hidden-until-ready");
+          shell.classList.add("ready");
+          splash.classList.add("hidden");
+        }
+
+        window.addEventListener("load", function () {
+          // Minimum splash duration so the loading screen is always visible
+          // briefly, even on a fast connection.
+          setTimeout(revealHome, 700);
+        });
+      })();
+    </script>
+  </body>
+</html>

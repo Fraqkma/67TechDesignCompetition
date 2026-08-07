@@ -1,0 +1,18 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Test and editor files
+.pytest_cache/
+.coverage
+.vscode/
+.idea/
+
+# Temporary JSON file created during an atomic write
+data/*.tmp
+
+# Operating system files
+.DS_Store
+Thumbs.db
