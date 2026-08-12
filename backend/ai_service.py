@@ -20,11 +20,23 @@ class AIService:
 
     @staticmethod
     def _resolve_model() -> str:
-        return os.getenv("AI_MODEL", "gpt-4o-mini")
+        model = os.getenv("AI_MODEL", "").strip()
+        if not model:
+            raise RuntimeError("AI_MODEL is not configured")
+        return model
 
     @staticmethod
     def _resolve_base_url() -> str:
         return os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
+
+    @staticmethod
+    def resolve_api_key() -> str:
+        """Read the server-side API key, preferring the standard OpenAI name."""
+
+        return (
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or os.getenv("AI_API_KEY", "").strip()
+        )
 
     @staticmethod
     def _build_graph_context(
