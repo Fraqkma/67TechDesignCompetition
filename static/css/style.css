@@ -381,7 +381,8 @@ h2 {
 .map-card,
 .recommendation-card,
 .detail-card,
-.achievement-card {
+.achievement-card,
+.ai-card {
   border: 1px solid var(--border);
   border-radius: 20px;
   background: rgba(13, 25, 36, 0.86);
@@ -778,8 +779,83 @@ h2 {
 
 .recommendation-card,
 .detail-card,
-.achievement-card {
+.achievement-card,
+.ai-card {
   padding: 20px;
+}
+
+.ai-card {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-key-box {
+  display: grid;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ai-key-box input,
+.ai-chat-input textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(7, 16, 25, 0.9);
+  color: var(--text);
+  font: inherit;
+}
+
+.ai-key-box input:focus,
+.ai-chat-input textarea:focus {
+  outline: none;
+  border-color: rgba(115, 229, 193, 0.5);
+  box-shadow: 0 0 0 3px rgba(115, 229, 193, 0.12);
+}
+
+.ai-summary {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(115, 229, 193, 0.04);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-chat-box {
+  display: grid;
+  gap: 10px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.ai-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-message.bot {
+  background: rgba(155, 126, 222, 0.08);
+}
+
+.ai-message.user {
+  background: rgba(47, 214, 164, 0.07);
+}
+
+.ai-chat-input {
+  display: grid;
+  gap: 10px;
 }
 
 .recommendation-card {

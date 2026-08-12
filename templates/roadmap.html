@@ -164,6 +164,50 @@
               <div class="skill-detail hidden" id="skill-detail"></div>
             </article>
 
+            <article class="ai-card" id="ai-card">
+              <div class="section-heading-inline">
+                <div>
+                  <span class="eyebrow">AI Assistant</span>
+                  <h2>วิเคราะห์แผนเรียน</h2>
+                </div>
+              </div>
+
+              <label class="ai-key-box" for="ai-api-key">
+                <span>OpenAI API key</span>
+                <input
+                  id="ai-api-key"
+                  type="password"
+                  placeholder="ใส่ API key ของคุณที่นี่"
+                  autocomplete="off"
+                />
+              </label>
+              <button class="button ghost full" id="save-ai-key" type="button">
+                บันทึก API key
+              </button>
+
+              <div class="ai-summary" id="ai-summary">
+                <p>ระบบจะอธิบายเหตุผลจาก graph และตอบคำถามแบบมีหลักฐานจาก roadmap</p>
+              </div>
+
+              <div class="ai-chat-box" id="ai-chat-box" aria-live="polite">
+                <div class="ai-message bot">
+                  <strong>AI:</strong>
+                  <span>พร้อมช่วยวิเคราะห์ roadmap และตอบคำถามเรื่องการเรียนรู้</span>
+                </div>
+              </div>
+
+              <div class="ai-chat-input">
+                <textarea
+                  id="ai-question"
+                  rows="3"
+                  placeholder="ถามเกี่ยวกับแผนการเรียน, skill ที่ขาด, หรือสิ่งที่ควรเรียนต่อ..."
+                ></textarea>
+                <button class="button primary full" id="ask-ai-button" type="button">
+                  ถาม AI
+                </button>
+              </div>
+            </article>
+
             <article class="achievement-card">
               <div class="section-heading-inline">
                 <div>
@@ -186,5 +230,6 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/ai.js') }}" defer></script>
   </body>
 </html>

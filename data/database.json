@@ -620,9 +620,7 @@
     }
   ],
   "progress": {
-    "completedSkillIds": [
-      "basic_physics"
-    ],
-    "updatedAt": "2026-08-06T15:21:20.096554+00:00"
+    "completedSkillIds": [],
+    "updatedAt": "2026-08-12T00:00:00+00:00"
   }
 }

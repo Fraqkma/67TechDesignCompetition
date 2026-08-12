@@ -109,6 +109,29 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(reset_response.status_code, 200)
         self.assertEqual(roadmap["completedSkillIds"], [])
 
+    def test_ai_recommendation_uses_graph_fallback_without_key(self) -> None:
+        response = self.client.post(
+            "/api/ai/recommendation",
+            json={"subject": "all"},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertIn("recommendation", payload["data"])
+        self.assertIn("graphSummary", payload["data"])
+
+    def test_ai_chat_requires_api_key(self) -> None:
+        response = self.client.post(
+            "/api/ai/chat",
+            json={"message": "ช่วยอธิบาย roadmap ให้ผมฟัง"},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(payload["ok"])
+        self.assertIn("API key", payload["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

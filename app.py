@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
-from backend import GraphEngine, GraphValidationError, JsonStore
+from backend import AIService, GraphEngine, GraphValidationError, JsonStore
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -230,6 +231,84 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return success(roadmap_data, "รีเซ็ต Progress เรียบร้อยแล้ว")
         except (KeyError, GraphValidationError, ValueError) as exc:
             return error("Could not reset progress", 500, str(exc))
+
+    @app.post("/api/ai/recommendation")
+    def ai_recommendation():
+        """Create a graph-aware recommendation payload for the front end.
+
+        If an AI API key is present, the route can enrich the explanation. Without
+        it, the backend still returns a valid recommendation using the graph rules.
+        """
+
+        body = request.get_json(silent=True) or {}
+        subject = body.get("subject", "all")
+        api_key = (body.get("apiKey") or os.getenv("AI_API_KEY", "")).strip()
+
+        try:
+            _, engine, completed = load_engine()
+            valid_subjects = {"all", *(subject_id["id"] for subject_id in engine.subjects)}
+            if subject not in valid_subjects:
+                return error("Unknown subject", 400, subject)
+
+            payload = AIService.build_recommendation_payload(
+                engine, completed, subject
+            )
+            payload["aiEnabled"] = bool(api_key)
+            if api_key:
+                try:
+                    payload["aiExplanation"] = AIService.ask_chat(
+                        (
+                            "อธิบายเหตุผลที่ควรเรียน Skill นี้ต่อจากสถานะปัจจุบันของผู้เรียน "
+                            "และอธิบายว่ามันจะช่วยปลดล็อกอะไรบ้าง"
+                        ),
+                        engine,
+                        completed,
+                        api_key,
+                    )
+                except RuntimeError as exc:
+                    payload["aiExplanation"] = payload["fallbackExplanation"]
+                    payload["aiWarning"] = str(exc)
+            else:
+                payload["aiExplanation"] = payload["fallbackExplanation"]
+                payload["aiWarning"] = (
+                    "AI API key ยังไม่ถูกตั้งค่า ระบบใช้งาน graph-only explanation "
+                    "แทน"
+                )
+
+            return success(payload, "AI recommendation generated")
+        except (KeyError, GraphValidationError, ValueError) as exc:
+            return error("Could not build AI recommendation", 500, str(exc))
+
+    @app.post("/api/ai/chat")
+    def ai_chat():
+        """Question-answer endpoint for the AI assistant panel.
+
+        The API key may come from the request body or from the environment. If no
+        key is present, the route refuses the request so the UI can prompt the user.
+        """
+
+        body = request.get_json(silent=True) or {}
+        message = body.get("message")
+        api_key = (body.get("apiKey") or os.getenv("AI_API_KEY", "")).strip()
+
+        if not isinstance(message, str) or not message.strip():
+            return error("Message must be a non-empty string")
+        if not api_key:
+            return error(
+                "AI API key is required. Add it in the page or set AI_API_KEY in the environment.",
+                400,
+            )
+
+        try:
+            _, engine, completed = load_engine()
+            answer = AIService.ask_chat(message, engine, completed, api_key)
+            return success({"answer": answer}, "AI response generated")
+        except ValueError as exc:
+            return error("AI API key is required", 400, str(exc))
+        except RuntimeError as exc:
+            return error("AI request failed", 502, str(exc))
+        except (KeyError, GraphValidationError, ValueError) as exc:
+            return error("Could not answer the chat question", 500, str(exc))
 
     return app
 
