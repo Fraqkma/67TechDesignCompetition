@@ -20,11 +20,98 @@ class AIService:
 
     @staticmethod
     def _resolve_model() -> str:
-        return os.getenv("AI_MODEL", "gpt-4o-mini")
+        model = os.getenv("AI_MODEL", "").strip()
+        if not model:
+            raise RuntimeError("AI_MODEL is not configured")
+        return model
 
     @staticmethod
     def _resolve_base_url() -> str:
         return os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
+
+    @staticmethod
+    def resolve_api_key() -> str:
+        """Use server configuration; never require a browser-provided secret."""
+
+        return (
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or os.getenv("AI_API_KEY", "").strip()
+        )
+
+    @staticmethod
+    def _request_completion(messages: list[dict[str, str]]) -> str:
+        api_key = AIService.resolve_api_key()
+        if not api_key:
+            raise ValueError("AI API key is not configured on the server")
+
+        payload = {
+            "model": AIService._resolve_model(),
+            "messages": messages,
+            "temperature": 0.3,
+        }
+        endpoint = f"{AIService._resolve_base_url().rstrip('/')}/chat/completions"
+        req = request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                response_body = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            raise RuntimeError("AI provider rejected the request") from exc
+        except Exception as exc:  # pragma: no cover - network failure path
+            raise RuntimeError("AI provider request failed") from exc
+
+        content = response_body.get("choices", [{}])[0].get("message", {}).get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("AI provider returned an empty answer")
+        return content.strip()
+
+    @staticmethod
+    def ask_teaching(
+        message: str,
+        analysis: dict[str, Any],
+        history: list[dict[str, str]],
+    ) -> str:
+        """Teach only the skill selected by Analyzer, retaining session context."""
+
+        skill = analysis["nextSkill"]
+        teaching_prompt = analysis["teachingPrompt"]
+        context = json.dumps(
+            {
+                "recommendedSkill": skill,
+                "reason": analysis.get("reason"),
+                "skillContext": analysis.get("skillContext"),
+                "graphEvidence": analysis.get("graphEvidence"),
+            },
+            ensure_ascii=False,
+        )
+        return AIService._request_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a Thai teaching assistant. Teach only the skill "
+                        "chosen by the Analyzer. Do not decide a learning path, "
+                        "invent skills, or invent/modify prerequisites. If the user "
+                        "asks outside the recommended skill, politely connect it back "
+                        "to the current lesson. Keep explanations practical and concise."
+                    ),
+                },
+                {
+                    "role": "system",
+                    "content": f"Teaching instruction:\n{teaching_prompt}\n\nTrusted context:\n{context}",
+                },
+                *history,
+                {"role": "user", "content": message},
+            ]
+        )
 
     @staticmethod
     def _build_graph_context(
@@ -166,9 +253,12 @@ class AIService:
         if not api_key or not api_key.strip():
             raise ValueError("AI API key is required")
 
-        payload = {
-            "model": AIService._resolve_model(),
-            "messages": [
+        # Legacy roadmap chat endpoint. New teaching chat uses ``ask_teaching``.
+        original_key = AIService.resolve_api_key()
+        if not original_key:
+            raise ValueError("AI API key is required")
+        return AIService._request_completion(
+            [
                 {
                     "role": "system",
                     "content": (
@@ -178,38 +268,5 @@ class AIService:
                     ),
                 },
                 {"role": "user", "content": AIService._build_prompt(message, engine, completed_ids)},
-            ],
-            "temperature": 0.3,
-        }
-
-        endpoint = f"{AIService._resolve_base_url().rstrip('/')}/chat/completions"
-        request_data = json.dumps(payload).encode("utf-8")
-
-        req = request.Request(
-            endpoint,
-            data=request_data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
+            ]
         )
-
-        try:
-            with request.urlopen(req, timeout=30) as response:
-                response_body = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"AI provider rejected the request: {details}") from exc
-        except Exception as exc:  # pragma: no cover - network failure path
-            raise RuntimeError(f"AI request failed: {exc}") from exc
-
-        choices = response_body.get("choices", [])
-        if not choices:
-            raise RuntimeError("AI provider returned no choices")
-
-        content = choices[0].get("message", {}).get("content", "")
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("AI provider returned an empty answer")
-
-        return content.strip()

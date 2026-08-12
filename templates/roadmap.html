@@ -167,32 +167,19 @@
             <article class="ai-card" id="ai-card">
               <div class="section-heading-inline">
                 <div>
-                  <span class="eyebrow">AI Assistant</span>
-                  <h2>วิเคราะห์แผนเรียน</h2>
+                  <span class="eyebrow">AI Teaching Assistant</span>
+                  <h2>เรียนกับผู้ช่วย AI</h2>
                 </div>
               </div>
 
-              <label class="ai-key-box" for="ai-api-key">
-                <span>OpenAI API key</span>
-                <input
-                  id="ai-api-key"
-                  type="password"
-                  placeholder="ใส่ API key ของคุณที่นี่"
-                  autocomplete="off"
-                />
-              </label>
-              <button class="button ghost full" id="save-ai-key" type="button">
-                บันทึก API key
-              </button>
-
               <div class="ai-summary" id="ai-summary">
-                <p>ระบบจะอธิบายเหตุผลจาก graph และตอบคำถามแบบมีหลักฐานจาก roadmap</p>
+                <p>กำลังเตรียมบทเรียนจาก Skill ที่ระบบแนะนำ...</p>
               </div>
 
               <div class="ai-chat-box" id="ai-chat-box" aria-live="polite">
                 <div class="ai-message bot">
                   <strong>AI:</strong>
-                  <span>พร้อมช่วยวิเคราะห์ roadmap และตอบคำถามเรื่องการเรียนรู้</span>
+                  <span>พร้อมช่วยเรียน Skill ที่ระบบแนะนำ</span>
                 </div>
               </div>
 
@@ -200,10 +187,10 @@
                 <textarea
                   id="ai-question"
                   rows="3"
-                  placeholder="ถามเกี่ยวกับแผนการเรียน, skill ที่ขาด, หรือสิ่งที่ควรเรียนต่อ..."
+                  placeholder="ถามเรื่อง Skill ที่กำลังแนะนำ เช่น ขอคำอธิบายหรือตัวอย่าง..."
                 ></textarea>
                 <button class="button primary full" id="ask-ai-button" type="button">
-                  ถาม AI
+                  ส่งคำถาม
                 </button>
               </div>
             </article>

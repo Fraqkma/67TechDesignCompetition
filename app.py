@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, render_template, request
+from dotenv import load_dotenv
 
-from backend import AIService, GraphEngine, GraphValidationError, JsonStore
+from backend import (
+    AIAnalyzer,
+    AIService,
+    GraphEngine,
+    GraphValidationError,
+    JsonStore,
+    TeachingAssistant,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "database.json"
+load_dotenv(BASE_DIR / ".env")
 
 
 def create_app(database_path: str | Path | None = None) -> Flask:
@@ -242,7 +250,7 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
         body = request.get_json(silent=True) or {}
         subject = body.get("subject", "all")
-        api_key = (body.get("apiKey") or os.getenv("AI_API_KEY", "")).strip()
+        api_key = AIService.resolve_api_key()
 
         try:
             _, engine, completed = load_engine()
@@ -289,7 +297,7 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
         body = request.get_json(silent=True) or {}
         message = body.get("message")
-        api_key = (body.get("apiKey") or os.getenv("AI_API_KEY", "")).strip()
+        api_key = AIService.resolve_api_key()
 
         if not isinstance(message, str) or not message.strip():
             return error("Message must be a non-empty string")
@@ -309,6 +317,59 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("AI request failed", 502, str(exc))
         except (KeyError, GraphValidationError, ValueError) as exc:
             return error("Could not answer the chat question", 500, str(exc))
+
+    @app.post("/api/ai/analyze")
+    def ai_analyze():
+        """Expose Analyzer context for the teaching UI without calling a model."""
+
+        body = request.get_json(silent=True) or {}
+        subject = body.get("subject", "all")
+        if not isinstance(subject, str):
+            return error("subject must be a string")
+
+        try:
+            _, engine, completed = load_engine()
+            valid_subjects = {"all", *(item["id"] for item in engine.subjects)}
+            if subject not in valid_subjects:
+                return error("Unknown subject", 400, subject)
+            return success(
+                AIAnalyzer.analyze(engine, completed, subject),
+                "AI analysis generated",
+            )
+        except (GraphValidationError, ValueError) as exc:
+            return error("Could not analyze learning progress", 500, str(exc))
+
+    @app.post("/api/chat")
+    def teaching_chat():
+        """Teach the Analyzer-selected skill using server-side provider config."""
+
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("Request body must be JSON")
+
+        message = body.get("message")
+        history = body.get("history", [])
+        if not isinstance(message, str) or not message.strip():
+            return error("message must be a non-empty string")
+
+        try:
+            _, engine, completed = load_engine()
+            analysis = AIAnalyzer.analyze(engine, completed)
+            answer = TeachingAssistant.answer(message, analysis, history)
+            return success(
+                {
+                    "answer": answer,
+                    "recommendedSkill": analysis["nextSkill"],
+                    "reason": analysis["reason"],
+                },
+                "Teaching response generated",
+            )
+        except ValueError as exc:
+            return error(str(exc), 400)
+        except RuntimeError as exc:
+            return error("AI teaching request failed", 502, str(exc))
+        except (GraphValidationError, KeyError) as exc:
+            return error("Could not prepare teaching context", 500, str(exc))
 
     return app
 
