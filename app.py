@@ -21,6 +21,9 @@ from backend import (
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "database.json"
+
+# Local development uses .env; deployed environments can provide the same
+# variables directly and take precedence over values already in the process.
 load_dotenv(BASE_DIR / ".env")
 
 
@@ -46,8 +49,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
     def error(message: str, status: int = 400, details: Any = None):
         payload: dict[str, Any] = {"ok": False, "error": message}
-        if details is not None:
-            payload["details"] = details
         return jsonify(payload), status
 
     def load_engine() -> tuple[dict[str, Any], GraphEngine, set[str]]:
@@ -250,7 +251,7 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
         body = request.get_json(silent=True) or {}
         subject = body.get("subject", "all")
-        api_key = AIService.resolve_api_key()
+        api_key = (body.get("apiKey") or AIService.resolve_api_key()).strip()
 
         try:
             _, engine, completed = load_engine()
@@ -287,6 +288,44 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         except (KeyError, GraphValidationError, ValueError) as exc:
             return error("Could not build AI recommendation", 500, str(exc))
 
+    @app.post("/api/ai/analyze")
+    def ai_analyze():
+        """Return graph-grounded analysis for a future teaching assistant.
+
+        This endpoint intentionally uses server-side graph/progress data only.
+        It does not accept API keys and does not ask an AI provider to determine
+        prerequisites or the next skill.
+        """
+
+        body = request.get_json(silent=True) or {}
+        subject = body.get("subject", "all")
+        target_skill_id = body.get("targetSkillId")
+
+        if not isinstance(subject, str):
+            return error("subject must be a string")
+        if target_skill_id is not None and (
+            not isinstance(target_skill_id, str) or not target_skill_id
+        ):
+            return error("targetSkillId must be a non-empty string when provided")
+
+        try:
+            _, engine, completed = load_engine()
+            valid_subjects = {"all", *(item["id"] for item in engine.subjects)}
+            if subject not in valid_subjects:
+                return error("Unknown subject", 400, subject)
+            if target_skill_id is not None and target_skill_id not in engine.skill_by_id:
+                return error("Target skill not found", 404, target_skill_id)
+
+            analysis = AIAnalyzer.analyze(
+                engine,
+                completed,
+                preferred_subject=subject,
+                target_skill_id=target_skill_id,
+            )
+            return success(analysis, "AI analysis generated")
+        except (GraphValidationError, ValueError) as exc:
+            return error("Could not analyze learning progress", 500, str(exc))
+
     @app.post("/api/ai/chat")
     def ai_chat():
         """Question-answer endpoint for the AI assistant panel.
@@ -297,7 +336,7 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
         body = request.get_json(silent=True) or {}
         message = body.get("message")
-        api_key = AIService.resolve_api_key()
+        api_key = (body.get("apiKey") or AIService.resolve_api_key()).strip()
 
         if not isinstance(message, str) or not message.strip():
             return error("Message must be a non-empty string")
@@ -317,27 +356,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("AI request failed", 502, str(exc))
         except (KeyError, GraphValidationError, ValueError) as exc:
             return error("Could not answer the chat question", 500, str(exc))
-
-    @app.post("/api/ai/analyze")
-    def ai_analyze():
-        """Expose Analyzer context for the teaching UI without calling a model."""
-
-        body = request.get_json(silent=True) or {}
-        subject = body.get("subject", "all")
-        if not isinstance(subject, str):
-            return error("subject must be a string")
-
-        try:
-            _, engine, completed = load_engine()
-            valid_subjects = {"all", *(item["id"] for item in engine.subjects)}
-            if subject not in valid_subjects:
-                return error("Unknown subject", 400, subject)
-            return success(
-                AIAnalyzer.analyze(engine, completed, subject),
-                "AI analysis generated",
-            )
-        except (GraphValidationError, ValueError) as exc:
-            return error("Could not analyze learning progress", 500, str(exc))
 
     @app.post("/api/chat")
     def teaching_chat():

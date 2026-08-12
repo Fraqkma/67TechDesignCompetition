@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-import unittest
 from pathlib import Path
+import unittest
 from unittest.mock import patch
 
 from app import create_app
@@ -111,7 +111,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(roadmap["completedSkillIds"], [])
 
     def test_ai_recommendation_uses_graph_fallback_without_key(self) -> None:
-        with patch.dict("os.environ", {"AI_API_KEY": "", "OPENAI_API_KEY": ""}):
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "", "OPENAI_API_KEY": ""}
+        ):
             response = self.client.post(
                 "/api/ai/recommendation",
                 json={"subject": "all"},
@@ -123,8 +125,32 @@ class ApiTests(unittest.TestCase):
         self.assertIn("recommendation", payload["data"])
         self.assertIn("graphSummary", payload["data"])
 
+    def test_ai_analyzer_returns_future_chatbot_contract(self) -> None:
+        response = self.client.post(
+            "/api/ai/analyze",
+            json={"targetSkillId": "embedded_systems", "subject": "all"},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        analysis = payload["data"]
+        self.assertEqual(analysis["targetSkillId"], "embedded_systems")
+        self.assertEqual(analysis["recommendedPath"][-1]["id"], "embedded_systems")
+        self.assertEqual(analysis["analysisSource"], "graph_engine")
+        self.assertIsNotNone(analysis["teachingPrompt"])
+
+    def test_ai_analyzer_rejects_unknown_target(self) -> None:
+        response = self.client.post(
+            "/api/ai/analyze", json={"targetSkillId": "not_a_skill"}
+        )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_ai_chat_requires_api_key(self) -> None:
-        with patch.dict("os.environ", {"AI_API_KEY": "", "OPENAI_API_KEY": ""}):
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "", "OPENAI_API_KEY": ""}
+        ):
             response = self.client.post(
                 "/api/ai/chat",
                 json={"message": "ช่วยอธิบาย roadmap ให้ผมฟัง"},

@@ -31,7 +31,7 @@ class AIService:
 
     @staticmethod
     def resolve_api_key() -> str:
-        """Use server configuration; never require a browser-provided secret."""
+        """Read the server-side API key, preferring the standard OpenAI name."""
 
         return (
             os.getenv("OPENAI_API_KEY", "").strip()
@@ -39,23 +39,25 @@ class AIService:
         )
 
     @staticmethod
-    def _request_completion(messages: list[dict[str, str]]) -> str:
-        api_key = AIService.resolve_api_key()
-        if not api_key:
-            raise ValueError("AI API key is not configured on the server")
+    def _request_completion(messages: list[dict[str, str]], api_key: str) -> str:
+        if not api_key or not api_key.strip():
+            raise ValueError("AI API key is required")
 
         payload = {
             "model": AIService._resolve_model(),
             "messages": messages,
             "temperature": 0.3,
         }
+
         endpoint = f"{AIService._resolve_base_url().rstrip('/')}/chat/completions"
+        request_data = json.dumps(payload).encode("utf-8")
+
         req = request.Request(
             endpoint,
-            data=json.dumps(payload).encode("utf-8"),
+            data=request_data,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"******",
             },
             method="POST",
         )
@@ -64,13 +66,19 @@ class AIService:
             with request.urlopen(req, timeout=30) as response:
                 response_body = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            raise RuntimeError("AI provider rejected the request") from exc
+            details = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"AI provider rejected the request: {details}") from exc
         except Exception as exc:  # pragma: no cover - network failure path
-            raise RuntimeError("AI provider request failed") from exc
+            raise RuntimeError(f"AI request failed: {exc}") from exc
 
-        content = response_body.get("choices", [{}])[0].get("message", {}).get("content")
+        choices = response_body.get("choices", [])
+        if not choices:
+            raise RuntimeError("AI provider returned no choices")
+
+        content = choices[0].get("message", {}).get("content", "")
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("AI provider returned an empty answer")
+
         return content.strip()
 
     @staticmethod
@@ -106,11 +114,15 @@ class AIService:
                 },
                 {
                     "role": "system",
-                    "content": f"Teaching instruction:\n{teaching_prompt}\n\nTrusted context:\n{context}",
+                    "content": (
+                        "Teaching instruction:\n"
+                        f"{teaching_prompt}\n\nTrusted context:\n{context}"
+                    ),
                 },
                 *history,
                 {"role": "user", "content": message},
-            ]
+            ],
+            AIService.resolve_api_key(),
         )
 
     @staticmethod
@@ -250,13 +262,6 @@ class AIService:
         completed_ids: set[str],
         api_key: str,
     ) -> str:
-        if not api_key or not api_key.strip():
-            raise ValueError("AI API key is required")
-
-        # Legacy roadmap chat endpoint. New teaching chat uses ``ask_teaching``.
-        original_key = AIService.resolve_api_key()
-        if not original_key:
-            raise ValueError("AI API key is required")
         return AIService._request_completion(
             [
                 {
@@ -267,6 +272,10 @@ class AIService:
                         "อย่าคิดค้นหรือเพิ่ม prerequisite ที่ไม่ได้อยู่ใน graph"
                     ),
                 },
-                {"role": "user", "content": AIService._build_prompt(message, engine, completed_ids)},
-            ]
+                {
+                    "role": "user",
+                    "content": AIService._build_prompt(message, engine, completed_ids),
+                },
+            ],
+            api_key,
         )
