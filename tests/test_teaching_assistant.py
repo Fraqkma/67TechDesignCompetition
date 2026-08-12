@@ -47,6 +47,20 @@ class TeachingAssistantTests(unittest.TestCase):
         self.assertEqual(messages[2], {"role": "user", "content": "What is algebra?"})
         self.assertEqual(messages[-1], {"role": "user", "content": "Give me an example"})
 
+    @patch("backend.ai_service.request.urlopen")
+    def test_provider_request_uses_bearer_authorization(self, mocked_urlopen):
+        mocked_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"choices": [{"message": {"content": "answer"}}]}'
+        )
+
+        answer = AIService._request_completion(
+            [{"role": "user", "content": "hello"}], "test-key"
+        )
+
+        self.assertEqual(answer, "answer")
+        request_object = mocked_urlopen.call_args.args[0]
+        self.assertEqual(request_object.get_header("Authorization"), "Bearer test-key")
+
 
 if __name__ == "__main__":
     unittest.main()
