@@ -39,6 +39,93 @@ class AIService:
         )
 
     @staticmethod
+    def _request_completion(messages: list[dict[str, str]], api_key: str) -> str:
+        if not api_key or not api_key.strip():
+            raise ValueError("AI API key is required")
+
+        payload = {
+            "model": AIService._resolve_model(),
+            "messages": messages,
+            "temperature": 0.3,
+        }
+
+        endpoint = f"{AIService._resolve_base_url().rstrip('/')}/chat/completions"
+        request_data = json.dumps(payload).encode("utf-8")
+
+        req = request.Request(
+            endpoint,
+            data=request_data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"******",
+            },
+            method="POST",
+        )
+
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                response_body = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"AI provider rejected the request: {details}") from exc
+        except Exception as exc:  # pragma: no cover - network failure path
+            raise RuntimeError(f"AI request failed: {exc}") from exc
+
+        choices = response_body.get("choices", [])
+        if not choices:
+            raise RuntimeError("AI provider returned no choices")
+
+        content = choices[0].get("message", {}).get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("AI provider returned an empty answer")
+
+        return content.strip()
+
+    @staticmethod
+    def ask_teaching(
+        message: str,
+        analysis: dict[str, Any],
+        history: list[dict[str, str]],
+    ) -> str:
+        """Teach only the skill selected by Analyzer, retaining session context."""
+
+        skill = analysis["nextSkill"]
+        teaching_prompt = analysis["teachingPrompt"]
+        context = json.dumps(
+            {
+                "recommendedSkill": skill,
+                "reason": analysis.get("reason"),
+                "skillContext": analysis.get("skillContext"),
+                "graphEvidence": analysis.get("graphEvidence"),
+            },
+            ensure_ascii=False,
+        )
+        return AIService._request_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a Thai teaching assistant. Teach only the skill "
+                        "chosen by the Analyzer. Do not decide a learning path, "
+                        "invent skills, or invent/modify prerequisites. If the user "
+                        "asks outside the recommended skill, politely connect it back "
+                        "to the current lesson. Keep explanations practical and concise."
+                    ),
+                },
+                {
+                    "role": "system",
+                    "content": (
+                        "Teaching instruction:\n"
+                        f"{teaching_prompt}\n\nTrusted context:\n{context}"
+                    ),
+                },
+                *history,
+                {"role": "user", "content": message},
+            ],
+            AIService.resolve_api_key(),
+        )
+
+    @staticmethod
     def _build_graph_context(
         engine: GraphEngine,
         completed_ids: set[str],
@@ -175,12 +262,8 @@ class AIService:
         completed_ids: set[str],
         api_key: str,
     ) -> str:
-        if not api_key or not api_key.strip():
-            raise ValueError("AI API key is required")
-
-        payload = {
-            "model": AIService._resolve_model(),
-            "messages": [
+        return AIService._request_completion(
+            [
                 {
                     "role": "system",
                     "content": (
@@ -189,39 +272,10 @@ class AIService:
                         "อย่าคิดค้นหรือเพิ่ม prerequisite ที่ไม่ได้อยู่ใน graph"
                     ),
                 },
-                {"role": "user", "content": AIService._build_prompt(message, engine, completed_ids)},
+                {
+                    "role": "user",
+                    "content": AIService._build_prompt(message, engine, completed_ids),
+                },
             ],
-            "temperature": 0.3,
-        }
-
-        endpoint = f"{AIService._resolve_base_url().rstrip('/')}/chat/completions"
-        request_data = json.dumps(payload).encode("utf-8")
-
-        req = request.Request(
-            endpoint,
-            data=request_data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
+            api_key,
         )
-
-        try:
-            with request.urlopen(req, timeout=30) as response:
-                response_body = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"AI provider rejected the request: {details}") from exc
-        except Exception as exc:  # pragma: no cover - network failure path
-            raise RuntimeError(f"AI request failed: {exc}") from exc
-
-        choices = response_body.get("choices", [])
-        if not choices:
-            raise RuntimeError("AI provider returned no choices")
-
-        content = choices[0].get("message", {}).get("content", "")
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("AI provider returned an empty answer")
-
-        return content.strip()

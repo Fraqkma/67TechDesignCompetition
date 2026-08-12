@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
-from pathlib import Path
 
 from app import create_app
 
@@ -160,6 +160,47 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(payload["ok"])
         self.assertIn("API key", payload["error"])
+
+    def test_analyzer_returns_teaching_context(self) -> None:
+        response = self.client.post("/api/ai/analyze", json={"subject": "all"})
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertIsNotNone(payload["data"]["nextSkill"])
+        self.assertTrue(payload["data"]["teachingPrompt"])
+        self.assertEqual(payload["data"]["analysisSource"], "graph_engine")
+
+    @patch("app.TeachingAssistant.answer", return_value="นี่คือตัวอย่างคำอธิบาย")
+    def test_teaching_chat_uses_server_analyzer_context(self, mocked_answer) -> None:
+        response = self.client.post(
+            "/api/chat",
+            json={
+                "message": "ช่วยยกตัวอย่างให้หน่อย",
+                "history": [{"role": "assistant", "content": "เริ่มเรียนกัน"}],
+            },
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["answer"], "นี่คือตัวอย่างคำอธิบาย")
+        analysis = mocked_answer.call_args.args[1]
+        self.assertEqual(analysis["analysisSource"], "graph_engine")
+        self.assertTrue(analysis["teachingPrompt"])
+
+    def test_teaching_chat_rejects_missing_message(self) -> None:
+        response = self.client.post("/api/chat", json={"history": []})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()["ok"])
+
+    @patch("app.TeachingAssistant.answer", side_effect=RuntimeError("provider down"))
+    def test_teaching_chat_handles_provider_failure(self, _mocked_answer) -> None:
+        response = self.client.post("/api/chat", json={"message": "ช่วยสอนหน่อย"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.get_json()["error"], "AI teaching request failed")
 
 
 if __name__ == "__main__":

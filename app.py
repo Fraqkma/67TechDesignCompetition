@@ -9,7 +9,14 @@ from typing import Any
 from flask import Flask, jsonify, render_template, request
 from dotenv import load_dotenv
 
-from backend import AIAnalyzer, AIService, GraphEngine, GraphValidationError, JsonStore
+from backend import (
+    AIAnalyzer,
+    AIService,
+    GraphEngine,
+    GraphValidationError,
+    JsonStore,
+    TeachingAssistant,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,8 +49,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
     def error(message: str, status: int = 400, details: Any = None):
         payload: dict[str, Any] = {"ok": False, "error": message}
-        if details is not None:
-            payload["details"] = details
         return jsonify(payload), status
 
     def load_engine() -> tuple[dict[str, Any], GraphEngine, set[str]]:
@@ -351,6 +356,38 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("AI request failed", 502, str(exc))
         except (KeyError, GraphValidationError, ValueError) as exc:
             return error("Could not answer the chat question", 500, str(exc))
+
+    @app.post("/api/chat")
+    def teaching_chat():
+        """Teach the Analyzer-selected skill using server-side provider config."""
+
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("Request body must be JSON")
+
+        message = body.get("message")
+        history = body.get("history", [])
+        if not isinstance(message, str) or not message.strip():
+            return error("message must be a non-empty string")
+
+        try:
+            _, engine, completed = load_engine()
+            analysis = AIAnalyzer.analyze(engine, completed)
+            answer = TeachingAssistant.answer(message, analysis, history)
+            return success(
+                {
+                    "answer": answer,
+                    "recommendedSkill": analysis["nextSkill"],
+                    "reason": analysis["reason"],
+                },
+                "Teaching response generated",
+            )
+        except ValueError as exc:
+            return error(str(exc), 400)
+        except RuntimeError as exc:
+            return error("AI teaching request failed", 502, str(exc))
+        except (GraphValidationError, KeyError) as exc:
+            return error("Could not prepare teaching context", 500, str(exc))
 
     return app
 
