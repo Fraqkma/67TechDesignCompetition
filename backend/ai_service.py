@@ -57,7 +57,7 @@ class AIService:
             data=request_data,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"******",
+                "Authorization": f"Bearer {api_key}",
             },
             method="POST",
         )
