@@ -1,34 +1,84 @@
-"""Integration tests for Flask routes and temporary JSON persistence."""
+"""Integration tests for Flask routes backed by the connected PostgreSQL DB."""
 
 from __future__ import annotations
 
-import shutil
-import tempfile
-from pathlib import Path
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
-from app import create_app
+import bcrypt
 
-
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-SOURCE_DATABASE = PROJECT_DIR / "data" / "database.json"
+from app import create_app, get_db
 
 
 class ApiTests(unittest.TestCase):
-    """Run the real API against a disposable copy of database.json."""
+    """Run the real API against the connected PostgreSQL database."""
 
     def setUp(self) -> None:
-        self.temp_directory = tempfile.TemporaryDirectory()
-        self.database_path = Path(self.temp_directory.name) / "database.json"
-        shutil.copy2(SOURCE_DATABASE, self.database_path)
-
-        self.app = create_app(self.database_path)
+        self.app = create_app()
         self.app.config.update(TESTING=True)
         self.client = self.app.test_client()
 
+        # Create a throwaway user so progress writes satisfy the FK constraint.
+        self.test_email = f"test-{uuid4().hex[:8]}@example.com"
+        self.test_password = "test-pass-1234"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        uuid4().hex[:12],
+                        self.test_email,
+                        bcrypt.hashpw(
+                            self.test_password.encode("utf-8"),
+                            bcrypt.gensalt(),
+                        ).decode("utf-8"),
+                    ),
+                )
+                self.user_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, display_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (user_id) DO NOTHING
+                    """,
+                    (self.user_id, "API Test User"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = self.user_id
+
+        # Pick a career and data-driven nodes from the real database.
+        response = self.client.get("/api/careers")
+        self.careers = response.get_json()["data"]
+        available_careers = [c for c in self.careers if c["available"]]
+        self.career_id = available_careers[0]["id"] if available_careers else None
+
+        roadmap_response = self.client.get(f"/api/roadmap?career={self.career_id}")
+        self.roadmap = roadmap_response.get_json()["data"]
+        self.available_node = next(
+            node["id"] for node in self.roadmap["nodes"] if node["status"] == "available"
+        )
+        self.locked_node = next(
+            node["id"] for node in self.roadmap["nodes"] if node["status"] == "locked"
+        )
+
     def tearDown(self) -> None:
-        self.temp_directory.cleanup()
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE id = %s", (self.user_id,))
+            conn.commit()
+        finally:
+            conn.close()
 
     def test_health_endpoint(self) -> None:
         response = self.client.get("/api/health")
@@ -37,6 +87,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["data"]["graphValid"])
+        self.assertGreater(payload["data"]["skillCount"], 0)
 
     def test_frontend_and_assets_are_served(self) -> None:
         """Flask must serve the page, CSS and JavaScript from one localhost."""
@@ -62,12 +113,26 @@ class ApiTests(unittest.TestCase):
         self.addCleanup(roadmap.close)
 
         self.assertEqual(select_track.status_code, 200)
-        self.assertIn(b'tracks-hero', select_track.data)
+        self.assertIn(b"tracks-hero", select_track.data)
         self.assertEqual(roadmap.status_code, 200)
-        self.assertIn(b'roadmap-page', roadmap.data)
+        self.assertIn(b"roadmap-page", roadmap.data)
+
+    def test_careers_come_from_the_database(self) -> None:
+        response = self.client.get("/api/careers")
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertGreaterEqual(len(payload["data"]), 1)
+        for career in payload["data"]:
+            self.assertIn("id", career)
+            self.assertIn("title", career)
+            self.assertIn("description", career)
+            self.assertIn("available", career)
+        self.assertTrue(any(career["available"] for career in payload["data"]))
 
     def test_roadmap_contract(self) -> None:
-        response = self.client.get("/api/roadmap")
+        response = self.client.get(f"/api/roadmap?career={self.career_id}")
         roadmap = response.get_json()["data"]
 
         self.assertIn("nodes", roadmap)
@@ -75,11 +140,16 @@ class ApiTests(unittest.TestCase):
         self.assertIn("progress", roadmap)
         self.assertIn("recommendedSkillId", roadmap)
         self.assertEqual(roadmap["progress"]["career"], 0)
+        self.assertEqual(roadmap["career"]["id"], str(self.career_id))
 
     def test_locked_skill_cannot_be_completed(self) -> None:
         response = self.client.post(
             "/api/progress",
-            json={"skillId": "embedded_systems", "completed": True},
+            json={
+                "skillId": self.locked_node,
+                "completed": True,
+                "careerId": self.career_id,
+            },
         )
 
         self.assertEqual(response.status_code, 409)
@@ -88,23 +158,34 @@ class ApiTests(unittest.TestCase):
     def test_available_skill_can_be_completed_and_persists(self) -> None:
         update_response = self.client.post(
             "/api/progress",
-            json={"skillId": "basic_algebra", "completed": True},
+            json={
+                "skillId": self.available_node,
+                "completed": True,
+                "careerId": self.career_id,
+            },
         )
         self.assertEqual(update_response.status_code, 200)
 
-        roadmap_response = self.client.get("/api/roadmap")
+        roadmap_response = self.client.get(f"/api/roadmap?career={self.career_id}")
         roadmap = roadmap_response.get_json()["data"]
         node = next(
-            item for item in roadmap["nodes"] if item["id"] == "basic_algebra"
+            item for item in roadmap["nodes"] if item["id"] == self.available_node
         )
         self.assertEqual(node["status"], "completed")
 
     def test_reset_clears_progress(self) -> None:
         self.client.post(
             "/api/progress",
-            json={"skillId": "basic_algebra", "completed": True},
+            json={
+                "skillId": self.available_node,
+                "completed": True,
+                "careerId": self.career_id,
+            },
         )
-        reset_response = self.client.post("/api/reset")
+        reset_response = self.client.post(
+            "/api/reset",
+            json={"careerId": self.career_id},
+        )
         roadmap = reset_response.get_json()["data"]
 
         self.assertEqual(reset_response.status_code, 200)
@@ -116,7 +197,7 @@ class ApiTests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/api/ai/recommendation",
-                json={"subject": "all"},
+                json={"subject": "all", "careerId": self.career_id},
             )
         payload = response.get_json()
 
@@ -128,21 +209,26 @@ class ApiTests(unittest.TestCase):
     def test_ai_analyzer_returns_future_chatbot_contract(self) -> None:
         response = self.client.post(
             "/api/ai/analyze",
-            json={"targetSkillId": "embedded_systems", "subject": "all"},
+            json={
+                "targetSkillId": self.locked_node,
+                "subject": "all",
+                "careerId": self.career_id,
+            },
         )
         payload = response.get_json()
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload["ok"])
         analysis = payload["data"]
-        self.assertEqual(analysis["targetSkillId"], "embedded_systems")
-        self.assertEqual(analysis["recommendedPath"][-1]["id"], "embedded_systems")
+        self.assertEqual(analysis["targetSkillId"], self.locked_node)
+        self.assertEqual(analysis["recommendedPath"][-1]["id"], self.locked_node)
         self.assertEqual(analysis["analysisSource"], "graph_engine")
         self.assertIsNotNone(analysis["teachingPrompt"])
 
     def test_ai_analyzer_rejects_unknown_target(self) -> None:
         response = self.client.post(
-            "/api/ai/analyze", json={"targetSkillId": "not_a_skill"}
+            "/api/ai/analyze",
+            json={"targetSkillId": "not_a_skill", "careerId": self.career_id},
         )
 
         self.assertEqual(response.status_code, 404)
@@ -162,7 +248,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn("API key", payload["error"])
 
     def test_analyzer_returns_teaching_context(self) -> None:
-        response = self.client.post("/api/ai/analyze", json={"subject": "all"})
+        response = self.client.post(
+            "/api/ai/analyze", json={"subject": "all", "careerId": self.career_id}
+        )
         payload = response.get_json()
 
         self.assertEqual(response.status_code, 200)
@@ -178,6 +266,7 @@ class ApiTests(unittest.TestCase):
             json={
                 "message": "ช่วยยกตัวอย่างให้หน่อย",
                 "history": [{"role": "assistant", "content": "เริ่มเรียนกัน"}],
+                "careerId": self.career_id,
             },
         )
         payload = response.get_json()
@@ -197,7 +286,9 @@ class ApiTests(unittest.TestCase):
 
     @patch("app.TeachingAssistant.answer", side_effect=RuntimeError("provider down"))
     def test_teaching_chat_handles_provider_failure(self, _mocked_answer) -> None:
-        response = self.client.post("/api/chat", json={"message": "ช่วยสอนหน่อย"})
+        response = self.client.post(
+            "/api/chat", json={"message": "ช่วยสอนหน่อย", "careerId": self.career_id}
+        )
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.get_json()["error"], "AI teaching request failed")
