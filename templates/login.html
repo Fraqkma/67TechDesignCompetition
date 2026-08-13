@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Login — SkillGraph</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;750;800&family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  >
+
+  <style>
+    :root {
+      --background: #071019;
+      --surface: #0d1924;
+      --surface-2: #122230;
+      --surface-3: #172b3a;
+      --border: rgba(167, 204, 222, 0.16);
+      --border-strong: rgba(167, 204, 222, 0.3);
+
+      --text: #edf7fb;
+      --text-muted: #91a8b5;
+
+      --accent: #73e5c1;
+      --accent-strong: #2fd6a4;
+
+      --danger: #ff7c87;
+
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      color-scheme: dark;
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+
+      color: var(--text);
+
+      font-family:
+        "Inter",
+        "Noto Sans Thai",
+        "Segoe UI",
+        sans-serif;
+
+      background:
+        radial-gradient(
+          circle at 10% 0%,
+          rgba(47, 214, 164, 0.09),
+          transparent 28%
+        ),
+        radial-gradient(
+          circle at 95% 18%,
+          rgba(155, 126, 222, 0.09),
+          transparent 26%
+        ),
+        var(--background);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    /* =========================================
+       PAGE
+    ========================================= */
+
+    .login-page {
+      position: relative;
+
+      display: grid;
+      grid-template-columns: 1fr 460px;
+
+      width: min(1180px, 100%);
+      min-height: 100vh;
+
+      margin: 0 auto;
+      padding: 40px;
+      gap: 70px;
+
+      align-items: center;
+    }
+
+    /* =========================================
+       BRAND
+    ========================================= */
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .brand-mark {
+      display: grid;
+
+      width: 46px;
+      height: 46px;
+
+      place-items: center;
+
+      border: 1px solid rgba(115, 229, 193, 0.55);
+      border-radius: 14px;
+
+      color: var(--accent);
+
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.12em;
+
+      background: rgba(115, 229, 193, 0.09);
+
+      box-shadow:
+        inset 0 0 24px rgba(115, 229, 193, 0.05),
+        0 0 30px rgba(115, 229, 193, 0.04);
+    }
+
+    .brand strong,
+    .brand small {
+      display: block;
+    }
+
+    .brand strong {
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .brand small {
+      margin-top: 2px;
+
+      color: var(--text-muted);
+
+      font-size: 11px;
+    }
+
+    /* =========================================
+       LEFT SIDE
+    ========================================= */
+
+    .hero {
+      max-width: 600px;
+    }
+
+    .hero .brand {
+      margin-bottom: 55px;
+    }
+
+    .eyebrow {
+      margin-bottom: 12px;
+
+      color: var(--accent);
+
+      font-size: 11px;
+      font-weight: 700;
+
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      max-width: 600px;
+
+      margin: 0 0 18px;
+
+      font-size: clamp(38px, 5vw, 62px);
+      line-height: 1.02;
+
+      letter-spacing: -0.055em;
+    }
+
+    .hero h1 span {
+      color: var(--accent);
+    }
+
+    .hero-description {
+      max-width: 510px;
+
+      margin: 0;
+
+      color: var(--text-muted);
+
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    /* =========================================
+       GRAPH DECORATION
+    ========================================= */
+
+    .graph-decoration {
+      position: relative;
+
+      width: 100%;
+      max-width: 520px;
+
+      height: 220px;
+
+      margin-top: 50px;
+
+      border: 1px solid var(--border);
+      border-radius: 22px;
+
+      overflow: hidden;
+
+      background:
+        linear-gradient(
+          rgba(255, 255, 255, 0.018) 1px,
+          transparent 1px
+        ),
+        linear-gradient(
+          90deg,
+          rgba(255, 255, 255, 0.018) 1px,
+          transparent 1px
+        ),
+        rgba(13, 25, 36, 0.65);
+
+      background-size: 30px 30px;
+
+      box-shadow: var(--shadow);
+    }
+
+    .graph-line {
+      position: absolute;
+
+      height: 1px;
+
+      background: rgba(115, 229, 193, 0.25);
+
+      transform-origin: left center;
+    }
+
+    .line-1 {
+      width: 230px;
+      top: 92px;
+      left: 90px;
+      transform: rotate(-25deg);
+    }
+
+    .line-2 {
+      width: 190px;
+      top: 94px;
+      left: 90px;
+      transform: rotate(28deg);
+    }
+
+    .line-3 {
+      width: 180px;
+      top: 140px;
+      left: 280px;
+      transform: rotate(-32deg);
+    }
+
+    .graph-node {
+      position: absolute;
+
+      display: grid;
+
+      width: 48px;
+      height: 48px;
+
+      place-items: center;
+
+      border: 1px solid rgba(115, 229, 193, 0.45);
+      border-radius: 15px;
+
+      color: var(--accent);
+
+      font-size: 11px;
+      font-weight: 800;
+
+      background: var(--surface);
+
+      box-shadow:
+        0 0 25px rgba(115, 229, 193, 0.08);
+    }
+
+    .node-1 {
+      left: 65px;
+      top: 70px;
+    }
+
+    .node-2 {
+      left: 255px;
+      top: 35px;
+    }
+
+    .node-3 {
+      left: 255px;
+      top: 125px;
+    }
+
+    .node-4 {
+      right: 55px;
+      top: 80px;
+
+      border-color: rgba(199, 164, 255, 0.45);
+      color: #c7a4ff;
+    }
+
+    /* =========================================
+       LOGIN CARD
+    ========================================= */
+
+    .login-card {
+      width: 100%;
+
+      padding: 32px;
+
+      border: 1px solid var(--border);
+      border-radius: 24px;
+
+      background:
+        linear-gradient(
+          145deg,
+          rgba(255, 255, 255, 0.045),
+          transparent 55%
+        ),
+        rgba(13, 25, 36, 0.92);
+
+      box-shadow: var(--shadow);
+
+      backdrop-filter: blur(20px);
+    }
+
+    .login-header {
+      margin-bottom: 28px;
+    }
+
+    .login-header h2 {
+      margin: 0 0 8px;
+
+      font-size: 27px;
+      letter-spacing: -0.035em;
+    }
+
+    .login-header p {
+      margin: 0;
+
+      color: var(--text-muted);
+
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    /* =========================================
+       FORM
+    ========================================= */
+
+    .login-form {
+      display: grid;
+      gap: 18px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
+    .field label {
+      color: #c5d5dc;
+
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .input-wrapper {
+      position: relative;
+    }
+
+    .input-wrapper input {
+      width: 100%;
+      height: 48px;
+
+      padding: 0 14px;
+
+      border: 1px solid var(--border);
+      border-radius: 12px;
+
+      outline: none;
+
+      color: var(--text);
+
+      background: rgba(7, 16, 25, 0.75);
+
+      transition:
+        border-color 160ms ease,
+        box-shadow 160ms ease,
+        background 160ms ease;
+    }
+
+    .input-wrapper input::placeholder {
+      color: #5f7582;
+    }
+
+    .input-wrapper input:hover {
+      border-color: var(--border-strong);
+    }
+
+    .input-wrapper input:focus {
+      border-color: rgba(115, 229, 193, 0.55);
+
+      background: rgba(7, 16, 25, 0.95);
+
+      box-shadow:
+        0 0 0 3px rgba(115, 229, 193, 0.12);
+    }
+
+    .password-wrapper input {
+      padding-right: 82px;
+    }
+
+    .show-password {
+      position: absolute;
+
+      top: 50%;
+      right: 10px;
+
+      transform: translateY(-50%);
+
+      min-height: 32px;
+      padding: 0 9px;
+
+      border: 0;
+      border-radius: 8px;
+
+      color: var(--text-muted);
+
+      background: transparent;
+
+      cursor: pointer;
+
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .show-password:hover {
+      color: var(--accent);
+      background: rgba(115, 229, 193, 0.06);
+    }
+
+    /* =========================================
+       ERROR
+    ========================================= */
+
+    .login-error {
+      display: none;
+
+      padding: 11px 13px;
+
+      border: 1px solid rgba(255, 124, 135, 0.3);
+      border-radius: 11px;
+
+      color: var(--danger);
+
+      font-size: 11px;
+      line-height: 1.5;
+
+      background: rgba(255, 124, 135, 0.06);
+    }
+
+    .login-error.show {
+      display: block;
+    }
+
+    /* =========================================
+       LOGIN BUTTON
+    ========================================= */
+
+    .login-button {
+      display: flex;
+
+      width: 100%;
+      min-height: 48px;
+
+      margin-top: 4px;
+
+      align-items: center;
+      justify-content: center;
+
+      border: 1px solid transparent;
+      border-radius: 12px;
+
+      color: #03231b;
+
+      background:
+        linear-gradient(
+          135deg,
+          var(--accent),
+          var(--accent-strong)
+        );
+
+      box-shadow:
+        0 10px 26px rgba(47, 214, 164, 0.2);
+
+      cursor: pointer;
+
+      font-weight: 800;
+
+      transition:
+        transform 160ms ease,
+        box-shadow 160ms ease,
+        opacity 160ms ease;
+    }
+
+    .login-button:hover:not(:disabled) {
+      transform: translateY(-1px);
+
+      box-shadow:
+        0 14px 32px rgba(47, 214, 164, 0.25);
+    }
+
+    .login-button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .login-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    /* =========================================
+       DIVIDER
+    ========================================= */
+
+    .divider {
+      display: flex;
+
+      gap: 12px;
+
+      align-items: center;
+
+      margin: 25px 0 20px;
+
+      color: #607783;
+
+      font-size: 10px;
+    }
+
+    .divider::before,
+    .divider::after {
+      flex: 1;
+
+      height: 1px;
+
+      background: var(--border);
+
+      content: "";
+    }
+
+    /* =========================================
+       FOOTER
+    ========================================= */
+
+    .login-footer {
+      color: var(--text-muted);
+
+      font-size: 11px;
+      line-height: 1.6;
+
+      text-align: center;
+    }
+
+    .login-footer a {
+      color: var(--accent);
+
+      font-weight: 700;
+
+      text-decoration: none;
+    }
+
+    .login-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .security-note {
+      display: flex;
+
+      gap: 7px;
+
+      align-items: center;
+      justify-content: center;
+
+      margin-top: 18px;
+
+      color: #617985;
+
+      font-size: 9px;
+    }
+
+    .security-dot {
+      width: 6px;
+      height: 6px;
+
+      border-radius: 50%;
+
+      background: var(--completed);
+
+      box-shadow: 0 0 10px var(--completed);
+    }
+
+    /* =========================================
+       LOADING
+    ========================================= */
+
+    .button-loader {
+      display: none;
+
+      width: 17px;
+      height: 17px;
+
+      border: 2px solid rgba(3, 35, 27, 0.25);
+      border-top-color: #03231b;
+
+      border-radius: 50%;
+
+      animation: spin 700ms linear infinite;
+    }
+
+    .login-button.loading .button-text {
+      display: none;
+    }
+
+    .login-button.loading .button-loader {
+      display: block;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* =========================================
+       RESPONSIVE
+    ========================================= */
+
+    @media (max-width: 900px) {
+      .login-page {
+        grid-template-columns: 1fr;
+
+        width: min(520px, 100%);
+
+        padding: 30px 20px 50px;
+
+        gap: 25px;
+      }
+
+      .hero {
+        text-align: center;
+      }
+
+      .hero .brand {
+        margin-bottom: 35px;
+      }
+
+      .hero-description {
+        margin: 0 auto;
+      }
+
+      .graph-decoration {
+        display: none;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .login-page {
+        padding: 20px 14px 35px;
+      }
+
+      .login-card {
+        padding: 24px 20px;
+        border-radius: 20px;
+      }
+
+      .hero h1 {
+        font-size: 38px;
+      }
+
+      .hero .brand {
+        justify-content: center;
+      }
+
+      .login-header h2 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <main class="login-page">
+
+    <!-- =====================================
+         LEFT SIDE
+    ====================================== -->
+
+    <section class="hero">
+
+      <a class="brand" href="/">
+        <span class="brand-mark">SG</span>
+
+        <span>
+          <strong>SkillGraph</strong>
+          <small>Learning Path Intelligence</small>
+        </span>
+      </a>
+
+      <div class="eyebrow">
+        YOUR LEARNING JOURNEY
+      </div>
+
+      <h1>
+        Build your
+        <span>skill tree.</span>
+      </h1>
+
+      <p class="hero-description">
+        เข้าสู่ระบบเพื่อดูเส้นทางการเรียนรู้ของคุณ
+        ติดตาม Skill Progress, EXP, Career Path
+        และค้นหา Skill ถัดไปที่ควรเรียน
+      </p>
+
+      <div class="graph-decoration">
+
+        <div class="graph-line line-1"></div>
+        <div class="graph-line line-2"></div>
+        <div class="graph-line line-3"></div>
+
+        <div class="graph-node node-1">
+          HTML
+        </div>
+
+        <div class="graph-node node-2">
+          CSS
+        </div>
+
+        <div class="graph-node node-3">
+          JS
+        </div>
+
+        <div class="graph-node node-4">
+          AI
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================
+         LOGIN CARD
+    ====================================== -->
+
+    <section class="login-card">
+
+      <div class="login-header">
+
+        <div class="eyebrow">
+          WELCOME BACK
+        </div>
+
+        <h2>
+          เข้าสู่ระบบ
+        </h2>
+
+        <p>
+          Login เพื่อกลับไปยัง SkillGraph ของคุณ
+        </p>
+
+      </div>
+
+
+      <form
+        id="loginForm"
+        class="login-form"
+      >
+
+        <!-- EMAIL -->
+
+        <div class="field">
+
+          <label for="email">
+            Email
+          </label>
+
+          <div class="input-wrapper">
+
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              placeholder="you@example.com"
+              required
+            >
+
+          </div>
+
+        </div>
+
+
+        <!-- PASSWORD -->
+
+        <div class="field">
+
+          <label for="password">
+            Password
+          </label>
+
+          <div class="input-wrapper password-wrapper">
+
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="••••••••"
+              required
+            >
+
+            <button
+              type="button"
+              class="show-password"
+              id="togglePassword"
+            >
+              แสดง
+            </button>
+
+          </div>
+
+        </div>
+
+
+        <!-- ERROR -->
+
+        <div
+          id="loginError"
+          class="login-error"
+          role="alert"
+        ></div>
+
+
+        <!-- LOGIN -->
+
+        <button
+          id="loginButton"
+          class="login-button"
+          type="submit"
+        >
+
+          <span class="button-text">
+            เข้าสู่ระบบ
+          </span>
+
+          <span class="button-loader"></span>
+
+        </button>
+
+      </form>
+
+
+      <div class="divider">
+        SKILLGRAPH
+      </div>
+
+
+      <div class="login-footer">
+        ยังไม่มีบัญชี?
+        <a href="/register">
+          สมัครสมาชิก
+        </a>
+      </div>
+
+
+      <div class="security-note">
+        <span class="security-dot"></span>
+
+        Secure authentication via SkillGraph API
+      </div>
+
+    </section>
+
+  </main>
+
+
+  <script>
+
+    const loginForm = document.getElementById("loginForm");
+    const loginButton = document.getElementById("loginButton");
+    const loginError = document.getElementById("loginError");
+
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+
+    const togglePassword =
+      document.getElementById("togglePassword");
+
+
+    // =========================================
+    // SHOW / HIDE PASSWORD
+    // =========================================
+
+    togglePassword.addEventListener(
+      "click",
+      () => {
+
+        const isPassword =
+          passwordInput.type === "password";
+
+        passwordInput.type =
+          isPassword
+            ? "text"
+            : "password";
+
+        togglePassword.textContent =
+          isPassword
+            ? "ซ่อน"
+            : "แสดง";
+      }
+    );
+
+
+    // =========================================
+    // ERROR
+    // =========================================
+
+    function showError(message) {
+
+      loginError.textContent = message;
+
+      loginError.classList.add("show");
+    }
+
+
+    function clearError() {
+
+      loginError.textContent = "";
+
+      loginError.classList.remove("show");
+    }
+
+
+    // =========================================
+    // LOGIN
+    // =========================================
+
+    loginForm.addEventListener(
+      "submit",
+      async (event) => {
+
+        event.preventDefault();
+
+        clearError();
+
+        const email =
+          emailInput.value.trim();
+
+        const password =
+          passwordInput.value;
+
+
+        if (!email || !password) {
+
+          showError(
+            "กรุณากรอก Email และ Password"
+          );
+
+          return;
+        }
+
+
+        loginButton.disabled = true;
+
+        loginButton.classList.add(
+          "loading"
+        );
+
+
+        try {
+
+          const response =
+            await fetch(
+              "/api/login",
+              {
+                method: "POST",
+
+                headers: {
+                  "Content-Type":
+                    "application/json"
+                },
+
+                credentials: "same-origin",
+
+                body: JSON.stringify({
+                  email: email,
+                  password: password
+                })
+              }
+            );
+
+
+          const result =
+            await response.json();
+
+
+          if (!response.ok) {
+
+            showError(
+              result.error ||
+              "Email หรือ Password ไม่ถูกต้อง"
+            );
+
+            return;
+          }
+
+
+          // Login สำเร็จ
+
+          window.location.href =
+            "/roadmap";
+
+        }
+
+        catch (error) {
+
+          console.error(error);
+
+          showError(
+            "ไม่สามารถเชื่อมต่อกับ Server ได้"
+          );
+
+        }
+
+        finally {
+
+          loginButton.disabled = false;
+
+          loginButton.classList.remove(
+            "loading"
+          );
+
+        }
+
+      }
+    );
+
+  </script>
+
+</body>
+</html>
