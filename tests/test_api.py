@@ -161,6 +161,86 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("API key", payload["error"])
 
+    @patch("app.AIService.ask_chat", return_value="อธิบายแบบย่อได้")
+    def test_ai_chat_includes_recommended_skill_context(self, mocked_ask_chat) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={"message": "ช่วยอธิบาย roadmap ให้ผมฟัง"},
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["answer"], "อธิบายแบบย่อได้")
+        self.assertIn("recommendedSkill", payload["data"])
+        self.assertTrue(payload["data"]["recommendedSkill"]["id"])
+        self.assertTrue(mocked_ask_chat.called)
+
+    def test_plan_preview_endpoint_returns_schedule(self) -> None:
+        class FakeCursor:
+            def __init__(self, rows):
+                self.rows = rows
+                self.last_query = ""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, query, params=None):
+                self.last_query = query
+
+            def fetchall(self):
+                if "SELECT skill_id FROM user_skill_progress" in self.last_query:
+                    return self.rows
+                return []
+
+        class FakeConnection:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def cursor(self):
+                return FakeCursor(self.rows)
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+            def close(self):
+                return None
+
+        fake_connection = FakeConnection([("basic_algebra",)])
+
+        with patch("app.get_db", return_value=fake_connection):
+            with self.client.session_transaction() as session:
+                session["user_id"] = 1
+
+            response = self.client.post(
+                "/api/plan/preview",
+                json={
+                    "targetSkillId": "functions_graphs",
+                    "weeklyHours": 6,
+                    "startDate": "2026-08-17",
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        plan = payload["data"]
+        self.assertEqual(plan["targetSkillId"], "functions_graphs")
+        self.assertEqual(plan["totalHours"], 10)
+        self.assertEqual([week["plannedHours"] for week in plan["weeks"]], [6, 4])
+        self.assertEqual(plan["estimatedCompletionDate"], "2026-08-30")
+
     def test_analyzer_returns_teaching_context(self) -> None:
         response = self.client.post("/api/ai/analyze", json={"subject": "all"})
         payload = response.get_json()
