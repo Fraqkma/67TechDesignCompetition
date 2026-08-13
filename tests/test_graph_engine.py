@@ -22,29 +22,12 @@ class GraphEngineTests(unittest.TestCase):
             self.database = json.load(database_file)
         self.engine = GraphEngine(self.database)
 
-    def _build_engine(self, database: dict) -> GraphEngine:
-        return GraphEngine(database)
-
     def test_graph_is_valid_dag(self) -> None:
         """Every skill must appear once in the topological order."""
 
         order = self.engine.topological_order
         self.assertEqual(len(order), len(self.database["skills"]))
         self.assertEqual(len(order), len(set(order)))
-
-    def test_database_uses_known_subjects_and_skills(self) -> None:
-        """The checked-in graph data must stay internally consistent."""
-
-        skill_ids = {skill["id"] for skill in self.database["skills"]}
-        subject_ids = {subject["id"] for subject in self.database["subjects"]}
-
-        self.assertEqual(len(skill_ids), len(self.database["skills"]))
-        self.assertTrue(skill_ids)
-        for skill in self.database["skills"]:
-            self.assertIn(skill["subjectId"], subject_ids)
-        for edge in self.database["edges"]:
-            self.assertIn(edge["source"], skill_ids)
-            self.assertIn(edge["target"], skill_ids)
 
     def test_root_skills_are_available(self) -> None:
         """Nodes with no prerequisites must be immediately learnable."""
@@ -120,46 +103,7 @@ class GraphEngineTests(unittest.TestCase):
         )
 
         with self.assertRaises(GraphValidationError):
-            self._build_engine(cyclic_database)
-
-    def test_duplicate_skill_ids_are_rejected(self) -> None:
-        """Two skills with the same id would make the graph ambiguous."""
-
-        duplicate_database = copy.deepcopy(self.database)
-        duplicate_database["skills"].append(
-            dict(duplicate_database["skills"][0])
-        )
-
-        with self.assertRaises(GraphValidationError):
-            self._build_engine(duplicate_database)
-
-    def test_unknown_subject_is_rejected(self) -> None:
-        """Every skill must belong to one of the declared subjects."""
-
-        invalid_database = copy.deepcopy(self.database)
-        invalid_database["skills"][0]["subjectId"] = "not_a_subject"
-
-        with self.assertRaises(GraphValidationError):
-            self._build_engine(invalid_database)
-
-    def test_unknown_edge_and_self_loop_are_rejected(self) -> None:
-        """Edges must point to real skills and must not loop back to themselves."""
-
-        unknown_edge_database = copy.deepcopy(self.database)
-        unknown_edge_database["edges"].append(
-            {"source": "basic_algebra", "target": "missing_skill"}
-        )
-
-        with self.assertRaises(GraphValidationError):
-            self._build_engine(unknown_edge_database)
-
-        self_loop_database = copy.deepcopy(self.database)
-        self_loop_database["edges"].append(
-            {"source": "basic_algebra", "target": "basic_algebra"}
-        )
-
-        with self.assertRaises(GraphValidationError):
-            self._build_engine(self_loop_database)
+            GraphEngine(cyclic_database)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,7 +20,6 @@ from backend import (
     GraphEngine,
     GraphValidationError,
     JsonStore,
-    PlanService,
     TeachingAssistant,
 )
 
@@ -768,60 +767,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             )
 
     # =====================================================
-    # Goal-to-Plan
-    # =====================================================
-
-    @app.post("/api/plan/preview")
-    def plan_preview():
-        """Schedule a graph-defined path using the learner's weekly capacity."""
-        user_id = logged_in_user_id()
-        if user_id is None:
-            return error("Login is required", 401)
-
-        body = request.get_json(silent=True)
-        if not isinstance(body, dict):
-            return error("Request body must be JSON")
-
-        target_skill_id = body.get("targetSkillId")
-        weekly_hours = body.get("weeklyHours")
-        start_date_value = body.get("startDate")
-        if not isinstance(target_skill_id, str) or not target_skill_id:
-            return error("targetSkillId must be a non-empty string")
-        if isinstance(weekly_hours, bool) or not isinstance(weekly_hours, int):
-            return error("weeklyHours must be an integer")
-        if start_date_value is None:
-            plan_start_date = date.today()
-        elif isinstance(start_date_value, str):
-            try:
-                plan_start_date = date.fromisoformat(start_date_value)
-            except ValueError:
-                return error("startDate must use YYYY-MM-DD")
-        else:
-            return error("startDate must use YYYY-MM-DD")
-
-        try:
-            _, engine, _ = load_engine()
-            completed = load_completed_for_user(user_id, engine)
-            return success(
-                PlanService.build_preview(
-                    engine,
-                    completed,
-                    target_skill_id,
-                    weekly_hours,
-                    plan_start_date,
-                ),
-                "Learning plan generated",
-            )
-        except KeyError:
-            return error("Skill not found", 404, target_skill_id)
-        except ValueError as exc:
-            return error(str(exc))
-        except psycopg2.Error as exc:
-            return error("Database connection failed", 500, str(exc))
-        except GraphValidationError as exc:
-            return error("Could not build learning plan", 500, str(exc))
-
-    # =====================================================
     # Progress
     # =====================================================
 
@@ -1280,11 +1225,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
             _, engine, completed = load_engine()
 
-            analysis = AIAnalyzer.analyze(
-                engine,
-                completed,
-            )
-
             answer = AIService.ask_chat(
                 message,
                 engine,
@@ -1295,9 +1235,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return success(
                 {
                     "answer": answer
-                    ,
-                    "recommendedSkill": analysis["nextSkill"],
-                    "reason": analysis["reason"],
                 },
                 "AI response generated",
             )
