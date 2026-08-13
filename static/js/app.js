@@ -15,6 +15,8 @@ const state = {
   toastTimer: null,
 };
 
+const DEFAULT_PLAN_WEEKLY_HOURS = 6;
+
 const elements = {
   loading: document.querySelector("#loading-overlay"),
   apiStatus: document.querySelector("#api-status"),
@@ -338,6 +340,47 @@ function renderBulletList(items) {
   return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
+function currentLocalDateIso() {
+  const now = new Date();
+  const offsetMinutes = now.getTimezoneOffset();
+  return new Date(now.getTime() - offsetMinutes * 60_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function renderPlanPreview(plan) {
+  const weeks = plan.weeks || [];
+  return `
+    <div class="path-result plan-result">
+      <h3>แผนเรียนรายสัปดาห์</h3>
+      <p class="detail-description">
+        ใช้ ${escapeHtml(plan.weeklyHours)} ชั่วโมง/สัปดาห์ เริ่ม ${escapeHtml(plan.startDate)}
+        และคาดว่าจะจบประมาณ ${escapeHtml(plan.estimatedCompletionDate)}
+      </p>
+      <div class="detail-meta">
+        <span class="meta-chip">รวม ${escapeHtml(plan.totalHours)} ชั่วโมง</span>
+        <span class="meta-chip">เหลือ ${escapeHtml(plan.remainingSkillCount)} skill</span>
+      </div>
+      ${
+        weeks.length
+          ? `<ol class="path-list">${weeks
+              .map(
+                (week) => `<li>
+                    Week ${escapeHtml(week.weekNumber)} · ${escapeHtml(week.plannedHours)}h
+                    <small>(${escapeHtml(week.startDate)} - ${escapeHtml(week.endDate)})</small>
+                    <ul>${week.assignments
+                      .map(
+                        (assignment) => `<li>${escapeHtml(assignment.name)} · ${escapeHtml(assignment.hours)}h</li>`
+                      )
+                      .join("")}</ul>
+                  </li>`
+              )
+              .join("")}</ol>`
+          : '<p class="detail-description">ยังไม่มีทักษะที่ต้องแบ่งเป็นหลายสัปดาห์</p>'
+      }
+    </div>`;
+}
+
 /** Open a skill and build its complete detail panel from roadmap JSON. */
 function openSkill(skillId) {
   const skill = getSkill(skillId);
@@ -491,8 +534,27 @@ async function buildPath(skillId) {
   resultContainer.innerHTML = '<div class="path-result">กำลังสร้างเส้นทาง...</div>';
 
   try {
-    const payload = await apiRequest(`/api/path/${encodeURIComponent(skillId)}`);
-    const { steps, targetName } = payload.data;
+    const pathPayload = await apiRequest(`/api/path/${encodeURIComponent(skillId)}`);
+    const { steps, targetName } = pathPayload.data;
+
+    let planMarkup = "";
+    try {
+      const planPayload = await apiRequest("/api/plan/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          targetSkillId: skillId,
+          weeklyHours: DEFAULT_PLAN_WEEKLY_HOURS,
+          startDate: currentLocalDateIso(),
+        }),
+      });
+      planMarkup = renderPlanPreview(planPayload.data);
+    } catch (planError) {
+      planMarkup = `
+        <div class="path-result plan-result">
+          <h3>แผนเรียนรายสัปดาห์</h3>
+          <p class="detail-description">ไม่สามารถสร้างแผนได้: ${escapeHtml(planError.message)}</p>
+        </div>`;
+    }
 
     resultContainer.innerHTML = `
       <div class="path-result">
@@ -507,6 +569,7 @@ async function buildPath(skillId) {
             : "<p class=\"detail-description\">เรียนเส้นทางนี้ครบแล้ว</p>"
         }
       </div>`;
+      ${planMarkup}
   } catch (error) {
     resultContainer.innerHTML = "";
     showToast(error.message, "error");

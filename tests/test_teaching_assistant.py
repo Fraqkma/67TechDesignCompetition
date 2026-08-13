@@ -53,9 +53,10 @@ class TeachingAssistantTests(unittest.TestCase):
             b'{"choices": [{"message": {"content": "answer"}}]}'
         )
 
-        answer = AIService._request_completion(
-            [{"role": "user", "content": "hello"}], "test-key"
-        )
+        with patch.dict("os.environ", {"AI_MODEL": "test-model"}):
+            answer = AIService._request_completion(
+                [{"role": "user", "content": "hello"}], "test-key"
+            )
 
         self.assertEqual(answer, "answer")
         request_object = mocked_urlopen.call_args.args[0]
