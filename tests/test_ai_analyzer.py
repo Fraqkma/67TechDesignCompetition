@@ -2,40 +2,43 @@
 
 from __future__ import annotations
 
-import json
 import unittest
-from pathlib import Path
 
+from app import get_db
 from backend.ai_analyzer import AIAnalyzer
+from backend.db_store import load_database
 from backend.graph_engine import GraphEngine
 
 
-DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "database.json"
-
-
 class AIAnalyzerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        with DATABASE_PATH.open(encoding="utf-8") as database_file:
-            self.engine = GraphEngine(json.load(database_file))
+    @classmethod
+    def setUpClass(cls) -> None:
+        conn = get_db()
+        try:
+            cls.database = load_database(conn)
+        finally:
+            conn.close()
+        cls.engine = GraphEngine(cls.database)
 
     def test_analysis_only_recommends_graph_available_skill(self) -> None:
-        analysis = AIAnalyzer.analyze(self.engine, {"basic_algebra"})
+        analysis = AIAnalyzer.analyze(self.engine, set())
         next_skill_id = analysis["nextSkill"]["id"]
 
         self.assertEqual(
-            self.engine.calculate_statuses({"basic_algebra"})[next_skill_id],
+            self.engine.calculate_statuses(set())[next_skill_id],
             "available",
         )
         self.assertEqual(analysis["analysisSource"], "graph_engine")
         self.assertIn("teachingPrompt", analysis)
 
     def test_target_path_contains_only_missing_graph_path(self) -> None:
+        target = self.database["skills"][-1]["id"]
         analysis = AIAnalyzer.analyze(
-            self.engine, set(), target_skill_id="embedded_systems"
+            self.engine, set(), target_skill_id=target
         )
         path_ids = [skill["id"] for skill in analysis["recommendedPath"]]
 
-        self.assertEqual(path_ids[-1], "embedded_systems")
+        self.assertEqual(path_ids[-1], target)
         self.assertEqual(
             [skill["id"] for skill in analysis["skillGap"]], path_ids
         )
@@ -43,13 +46,16 @@ class AIAnalyzerTests(unittest.TestCase):
 
     def test_blocked_skills_expose_only_graph_prerequisites(self) -> None:
         analysis = AIAnalyzer.analyze(self.engine, set())
-        electricity = next(
-            skill for skill in analysis["blockedSkills"] if skill["id"] == "electricity"
+        blocked = next(
+            skill
+            for skill in analysis["blockedSkills"]
+            if skill["id"] in self.engine.prerequisites
+            and self.engine.prerequisites[skill["id"]]
         )
 
         self.assertEqual(
-            electricity["missingPrerequisiteIds"],
-            ["basic_algebra", "basic_physics"],
+            blocked["missingPrerequisiteIds"],
+            sorted(self.engine.prerequisites[blocked["id"]]),
         )
 
 

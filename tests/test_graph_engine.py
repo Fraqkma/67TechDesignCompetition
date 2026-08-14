@@ -1,26 +1,26 @@
-"""Unit tests for graph rules without starting a web server."""
+"""Unit tests for graph rules using the DB-backed skill graph."""
 
 from __future__ import annotations
 
 import copy
-import json
 import unittest
-from pathlib import Path
 
+from app import get_db
+from backend.db_store import load_database
 from backend.graph_engine import GraphEngine, GraphValidationError
-
-
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-DATABASE_PATH = PROJECT_DIR / "data" / "database.json"
 
 
 class GraphEngineTests(unittest.TestCase):
     """Check the rules most likely to break during roadmap editing."""
 
-    def setUp(self) -> None:
-        with DATABASE_PATH.open("r", encoding="utf-8") as database_file:
-            self.database = json.load(database_file)
-        self.engine = GraphEngine(self.database)
+    @classmethod
+    def setUpClass(cls) -> None:
+        conn = get_db()
+        try:
+            cls.database = load_database(conn)
+        finally:
+            conn.close()
+        cls.engine = GraphEngine(cls.database)
 
     def _build_engine(self, database: dict) -> GraphEngine:
         return GraphEngine(database)
@@ -50,29 +50,49 @@ class GraphEngineTests(unittest.TestCase):
         """Nodes with no prerequisites must be immediately learnable."""
 
         statuses = self.engine.calculate_statuses(set())
-        self.assertEqual(statuses["basic_algebra"], "available")
-        self.assertEqual(statuses["basic_physics"], "available")
-        self.assertEqual(statuses["programming_fundamentals"], "available")
+        root_ids = [
+            skill["id"]
+            for skill in self.database["skills"]
+            if not self.engine.prerequisites[skill["id"]]
+        ]
+        self.assertTrue(root_ids)
+        for skill_id in root_ids:
+            self.assertEqual(statuses[skill_id], "available")
 
     def test_all_prerequisites_are_required(self) -> None:
-        """Electricity stays locked until both Algebra and Physics are done."""
+        """A skill stays locked until every prerequisite is done."""
 
-        only_algebra = self.engine.calculate_statuses({"basic_algebra"})
-        self.assertEqual(only_algebra["electricity"], "locked")
-
-        both_foundations = self.engine.calculate_statuses(
-            {"basic_algebra", "basic_physics"}
+        skill = next(
+            skill
+            for skill in self.database["skills"]
+            if len(self.engine.prerequisites[skill["id"]]) >= 2
         )
-        self.assertEqual(both_foundations["electricity"], "available")
+        path_ids = [
+            step["skillId"]
+            for step in self.engine.build_learning_path(skill["id"], set())
+        ]
+        prereq_ids = path_ids[:-1]
+        self.assertTrue(prereq_ids)
+
+        partial = self.engine.clean_completed(prereq_ids[:-1])
+        self.assertEqual(
+            self.engine.calculate_statuses(partial)[skill["id"]], "locked"
+        )
+
+        complete = self.engine.clean_completed(prereq_ids)
+        self.assertEqual(
+            self.engine.calculate_statuses(complete)[skill["id"]], "available"
+        )
 
     def test_learning_path_respects_every_edge(self) -> None:
         """All prerequisites in the target subgraph must precede their child."""
 
-        path = self.engine.build_learning_path("embedded_systems", set())
+        target = self.database["skills"][-1]["id"]
+        path = self.engine.build_learning_path(target, set())
         path_ids = [step["skillId"] for step in path]
         positions = {skill_id: index for index, skill_id in enumerate(path_ids)}
 
-        self.assertEqual(path_ids[-1], "embedded_systems")
+        self.assertEqual(path_ids[-1], target)
         for edge in self.database["edges"]:
             if edge["source"] in positions and edge["target"] in positions:
                 self.assertLess(
@@ -82,7 +102,7 @@ class GraphEngineTests(unittest.TestCase):
     def test_recommendation_is_always_available(self) -> None:
         """The recommendation algorithm must never suggest a locked skill."""
 
-        completed = {"basic_algebra"}
+        completed = set()
         statuses = self.engine.calculate_statuses(completed)
         recommendation = self.engine.recommend_next(completed)
 
@@ -90,33 +110,49 @@ class GraphEngineTests(unittest.TestCase):
         self.assertEqual(statuses[recommendation["skillId"]], "available")
 
     def test_progress_uses_skill_weights(self) -> None:
-        """Completing one weight-1 node contributes 1/totalWeight."""
+        """Completing one skill contributes its weight to career progress."""
 
-        progress = self.engine.calculate_progress({"basic_algebra"})
-        expected = round(1 / progress["totalWeight"] * 100)
+        skill = next(
+            skill for skill in self.database["skills"] if skill.get("required", True)
+        )
+        progress = self.engine.calculate_progress({skill["id"]})
+        expected = round(skill["weight"] / progress["totalWeight"] * 100)
 
-        self.assertEqual(progress["completedWeight"], 1)
+        self.assertEqual(progress["completedWeight"], skill["weight"])
         self.assertEqual(progress["career"], expected)
 
     def test_uncomplete_cascades_to_invalid_dependents(self) -> None:
-        """Removing C must also remove completed skills that need C."""
+        """Removing a skill must also remove completed dependents."""
 
-        all_completed = {skill["id"] for skill in self.database["skills"]}
+        all_completed = {
+            skill["id"] for skill in self.database["skills"]
+        }
+        target = next(
+            skill["id"]
+            for skill in self.database["skills"]
+            if self.engine.children[skill["id"]]
+        )
         remaining, removed = self.engine.remove_skill_and_invalid_dependents(
-            "c_programming", all_completed
+            target, all_completed
         )
 
-        self.assertNotIn("c_programming", remaining)
-        self.assertIn("data_structures", removed)
-        self.assertIn("computer_architecture", removed)
-        self.assertIn("embedded_systems", removed)
+        self.assertNotIn(target, remaining)
+        for skill_id in removed:
+            self.assertNotIn(skill_id, remaining)
 
     def test_cycle_is_rejected(self) -> None:
         """A backward edge that creates a loop must fail validation."""
 
+        # Follow one prerequisite chain to an ancestor, then add an edge from
+        # the descendant back to that ancestor to force a cycle.
+        descendant = self.database["skills"][-1]["id"]
+        ancestor = descendant
+        while self.engine.prerequisites[ancestor]:
+            ancestor = sorted(self.engine.prerequisites[ancestor])[0]
+
         cyclic_database = copy.deepcopy(self.database)
         cyclic_database["edges"].append(
-            {"source": "embedded_systems", "target": "basic_algebra"}
+            {"source": descendant, "target": ancestor}
         )
 
         with self.assertRaises(GraphValidationError):

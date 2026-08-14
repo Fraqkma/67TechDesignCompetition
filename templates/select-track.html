@@ -45,7 +45,7 @@
           </label>
           <span class="api-status">
             <span class="status-dot"></span>
-            Local prototype
+            Connected database
           </span>
         </div>
       </header>
@@ -58,69 +58,12 @@
             ความเชื่อมโยงระหว่างวิชา และลำดับการเรียนรู้
             ที่ช่วยให้วางแผนพัฒนาตัวเองได้ชัดเจนขึ้น
           </p>
-          <!--<a class="back-link" href="/">&larr; กลับหน้าแรก</a>-->
         </section>
 
         <section class="track-grid" id="track-grid">
-          <a class="track-card active" href="/roadmap" data-track-name="วิศวกรคอมพิวเตอร์ computer engineer ce">
-            <span class="track-status available">
-              <span class="status-dot"></span>
-              พร้อมใช้งาน
-            </span>
-            <div class="track-icon" aria-hidden="true">CE</div>
-            <div>
-              <h3>วิศวกรคอมพิวเตอร์</h3>
-              <p>
-                ผสานการเขียนโปรแกรม อิเล็กทรอนิกส์ และระบบคอมพิวเตอร์
-                เพื่อออกแบบอุปกรณ์และระบบดิจิทัล
-              </p>
-            </div>
-          </a>
-
-          <div class="track-card locked" aria-disabled="true" data-track-name="วิศวกรข้อมูล data science ds">
-            <span class="track-status locked">
-              <span class="status-dot"></span>
-              เร็ว ๆ นี้
-            </span>
-            <div class="track-icon" aria-hidden="true">DS</div>
-            <div>
-              <h3>วิศวกรข้อมูล / Data Science</h3>
-              <p>
-                วิเคราะห์ข้อมูล สร้างโมเดล Machine Learning
-                และออกแบบระบบข้อมูลขนาดใหญ่
-              </p>
-            </div>
-          </div>
-
-          <div class="track-card locked" aria-disabled="true" data-track-name="วิศวกรซอฟต์แวร์ software engineer se">
-            <span class="track-status locked">
-              <span class="status-dot"></span>
-              เร็ว ๆ นี้
-            </span>
-            <div class="track-icon" aria-hidden="true">SE</div>
-            <div>
-              <h3>วิศวกรซอฟต์แวร์</h3>
-              <p>
-                ออกแบบและพัฒนาแอปพลิเคชัน สถาปัตยกรรมซอฟต์แวร์
-                และระบบส่งมอบงานคุณภาพสูง
-              </p>
-            </div>
-          </div>
-
-          <div class="track-card locked" aria-disabled="true" data-track-name="cybersecurity cs ความปลอดภัยไซเบอร์">
-            <span class="track-status locked">
-              <span class="status-dot"></span>
-              เร็ว ๆ นี้
-            </span>
-            <div class="track-icon" aria-hidden="true">CS</div>
-            <div>
-              <h3>Cybersecurity</h3>
-              <p>
-                ป้องกันระบบและข้อมูลจากภัยคุกคามทางไซเบอร์
-                ตรวจจับช่องโหว่ และตอบสนองต่อเหตุการณ์ด้านความปลอดภัย
-              </p>
-            </div>
-          </div>
+          <p class="track-empty" id="track-loading">
+            กำลังโหลดสายอาชีพจากฐานข้อมูล...
+          </p>
         </section>
 
         <p class="track-empty hidden" id="track-empty">
@@ -131,14 +74,68 @@
 
     <script>
       (function () {
-        var input = document.getElementById("track-search");
-        var cards = Array.prototype.slice.call(
-          document.querySelectorAll("#track-grid .track-card")
-        );
-        var emptyMessage = document.getElementById("track-empty");
+        function escapeHtml(value) {
+          return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+        }
 
-        input.addEventListener("input", function (event) {
-          var query = event.target.value.trim().toLowerCase();
+        var grid = document.getElementById("track-grid");
+        var loading = document.getElementById("track-loading");
+        var emptyMessage = document.getElementById("track-empty");
+        var searchInput = document.getElementById("track-search");
+        var cards = [];
+
+        function cardMarkup(career) {
+          if (career.available) {
+            return (
+              '<a class="track-card active" href="/roadmap?career=' +
+              encodeURIComponent(career.id) +
+              '" data-track-name="' +
+              escapeHtml(career.title.toLowerCase()) +
+              '">' +
+              '<span class="track-status available">' +
+              '<span class="status-dot"></span> พร้อมใช้งาน</span>' +
+              '<div class="track-icon" aria-hidden="true">' +
+              escapeHtml(career.icon) +
+              "</div>" +
+              "<div>" +
+              "<h3>" +
+              escapeHtml(career.title) +
+              "</h3>" +
+              "<p>" +
+              escapeHtml(career.description || "ยังไม่มีคำอธิบาย") +
+              "</p>" +
+              "</div>" +
+              "</a>"
+            );
+          }
+          return (
+            '<div class="track-card locked" aria-disabled="true" data-track-name="' +
+            escapeHtml(career.title.toLowerCase()) +
+            '">' +
+            '<span class="track-status locked">' +
+            '<span class="status-dot"></span> เร็ว ๆ นี้</span>' +
+            '<div class="track-icon" aria-hidden="true">' +
+            escapeHtml(career.icon) +
+            "</div>" +
+            "<div>" +
+            "<h3>" +
+            escapeHtml(career.title) +
+            "</h3>" +
+            "<p>" +
+            escapeHtml(career.description || "ยังไม่มีคำอธิบาย") +
+            "</p>" +
+            "</div>" +
+            "</div>"
+          );
+        }
+
+        function applyFilter() {
+          var query = (searchInput.value || "").trim().toLowerCase();
           var visibleCount = 0;
 
           cards.forEach(function (card) {
@@ -149,7 +146,37 @@
           });
 
           emptyMessage.classList.toggle("hidden", visibleCount !== 0);
-        });
+        }
+
+        function renderCareers(careers) {
+          grid.innerHTML = careers.map(cardMarkup).join("");
+          cards = Array.prototype.slice.call(
+            grid.querySelectorAll(".track-card")
+          );
+          loading.classList.add("hidden");
+          emptyMessage.classList.add("hidden");
+          searchInput.disabled = false;
+        }
+
+        searchInput.addEventListener("input", applyFilter);
+        searchInput.disabled = true;
+
+        fetch("/api/careers", { credentials: "same-origin" })
+          .then(function (response) {
+            return response.json().catch(function () {
+              return { ok: false, error: "Server did not return valid JSON" };
+            });
+          })
+          .then(function (payload) {
+            if (!payload || payload.ok === false) {
+              throw new Error((payload && payload.error) || "Could not load careers");
+            }
+            renderCareers(payload.data || []);
+          })
+          .catch(function (error) {
+            loading.textContent = "ไม่สามารถโหลดสายอาชีพได้: " + error.message;
+            loading.classList.remove("hidden");
+          });
       })();
     </script>
   </body>

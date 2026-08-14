@@ -13,6 +13,7 @@ const state = {
   selectedSkillId: null,
   selectedSubject: "all",
   toastTimer: null,
+  careerId: new URLSearchParams(window.location.search).get("career") || null,
 };
 
 const DEFAULT_PLAN_WEEKLY_HOURS = 6;
@@ -120,6 +121,8 @@ function renderOverview() {
   elements.careerIcon.textContent = career.icon;
   elements.careerTitle.textContent = `${career.name} Roadmap`;
   elements.careerDescription.textContent = career.description;
+  document.querySelector("#career-progress-title").textContent =
+    `เส้นทางสู่${career.thaiName || career.name}`;
 
   elements.careerProgressValue.textContent = `${progress.career}%`;
   elements.careerProgressBar.style.width = `${progress.career}%`;
@@ -250,7 +253,7 @@ function statusIcon(status) {
   return "×";
 }
 
-/** Render the clickable skill nodes using coordinates stored in database.json. */
+/** Render the clickable skill nodes using coordinates from the backend. */
 function renderNodes() {
   elements.nodeLayer.innerHTML = state.roadmap.nodes
     .map((skill) => {
@@ -511,7 +514,7 @@ async function toggleSkill(skillId, completed) {
   try {
     const payload = await apiRequest("/api/progress", {
       method: "POST",
-      body: JSON.stringify({ skillId, completed }),
+      body: JSON.stringify({ skillId, completed, careerId: state.careerId }),
     });
 
     state.roadmap = payload.data.roadmap;
@@ -534,27 +537,8 @@ async function buildPath(skillId) {
   resultContainer.innerHTML = '<div class="path-result">กำลังสร้างเส้นทาง...</div>';
 
   try {
-    const pathPayload = await apiRequest(`/api/path/${encodeURIComponent(skillId)}`);
-    const { steps, targetName } = pathPayload.data;
-
-    let planMarkup = "";
-    try {
-      const planPayload = await apiRequest("/api/plan/preview", {
-        method: "POST",
-        body: JSON.stringify({
-          targetSkillId: skillId,
-          weeklyHours: DEFAULT_PLAN_WEEKLY_HOURS,
-          startDate: currentLocalDateIso(),
-        }),
-      });
-      planMarkup = renderPlanPreview(planPayload.data);
-    } catch (planError) {
-      planMarkup = `
-        <div class="path-result plan-result">
-          <h3>แผนเรียนรายสัปดาห์</h3>
-          <p class="detail-description">ไม่สามารถสร้างแผนได้: ${escapeHtml(planError.message)}</p>
-        </div>`;
-    }
+    const payload = await apiRequest(`/api/path/${encodeURIComponent(skillId)}`);
+    const { steps, targetName } = payload.data;
 
     resultContainer.innerHTML = `
       <div class="path-result">
@@ -591,7 +575,10 @@ async function loadRoadmap(showFullLoading = true) {
 
   try {
     const subjectQuery = encodeURIComponent(state.selectedSubject);
-    const payload = await apiRequest(`/api/roadmap?subject=${subjectQuery}`);
+    const careerQuery = state.careerId
+      ? `&career=${encodeURIComponent(state.careerId)}`
+      : "";
+    const payload = await apiRequest(`/api/roadmap?subject=${subjectQuery}${careerQuery}`);
     state.roadmap = payload.data;
     renderAll();
 
@@ -615,7 +602,10 @@ elements.resetButton.addEventListener("click", async () => {
   if (!confirmed) return;
 
   try {
-    const payload = await apiRequest("/api/reset", { method: "POST" });
+    const payload = await apiRequest("/api/reset", {
+      method: "POST",
+      body: JSON.stringify({ careerId: state.careerId }),
+    });
     state.roadmap = payload.data;
     state.selectedSkillId = null;
     elements.skillDetail.classList.add("hidden");
