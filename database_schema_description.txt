@@ -1,0 +1,166 @@
+================================================================================
+           COMPLETE DATABASE SCHEMA & RELATIONSHIP DOCUMENTATION
+================================================================================
+
+--------------------------------------------------------------------------------
+0. สรุปภาพรวมความสัมพันธ์ของตาราง (ENTITY RELATIONSHIPS OVERVIEW)
+--------------------------------------------------------------------------------
+- users (1) <---> (1) user_profiles
+- users (1) <---> (N) friendships (แอดเพื่อนแบบ User ถึง User)
+- users (1) <---> (N) certificates (เจ้าของใบประกาศฯ)
+- users (N) <---> (M) achievements (ผ่านตาราง user_achievements)
+- users (N) <---> (M) nodes (บันทึกก้าวหน้า ผ่านตาราง user_node_progress)
+- careers (1) <---> (N) user_profiles (สายอาชีพที่เลือกเรียน)
+- careers (N) <---> (M) nodes (โครงสร้างวิชาของอาชีพ ผ่านตาราง career_nodes)
+- nodes (N) <---> (M) nodes (วิชาบังคับก่อนหน้า ผ่านตาราง node_prerequisites)
+- study_sessions (1) <---> (N) session_members (สมาชิกในห้องติว)
+- study_sessions (1) <---> (N) chat_messages (ข้อความ/นัดหมายในห้องติว)
+- users (1) <---> (N) study_sessions (เป็น Host สร้างห้อง)
+
+--------------------------------------------------------------------------------
+1. หมวดผู้ใช้งานและโปรไฟล์ (USER & PROFILE MODULE)
+--------------------------------------------------------------------------------
+
+[TABLE: users]
+คำอธิบาย: เก็บข้อมูลบัญชีผู้ใช้งานสำหรับใช้ในการเข้าสู่ระบบ (Authentication) และรหัสแอดเพื่อน
+คอลัมน์:
+- id (BIGSERIAL, PK)           : รหัสประจำตัวผู้ใช้งานแบบออโต้รัน
+- uid (VARCHAR(12), UNIQUE)    : รหัส UID สั้นๆ (เช่น MEME-8821) ใช้ค้นหาเพื่อน/เจน QR Code
+- email (VARCHAR(255), UNIQUE) : อีเมลผู้ใช้งาน (ห้ามซ้ำ)
+- password_hash (VARCHAR(255)) : รหัสผ่านที่ผ่านการเข้ารหัสแล้ว (Hash)
+- created_at (TIMESTAMP)       : วันเวลาที่ลงทะเบียนสมัครสมาชิก
+
+[TABLE: user_profiles]
+คำอธิบาย: เก็บข้อมูลโปรไฟล์ ระบบ Gamification (Level/EXP) และสายอาชีพที่กำลังเรียนอยู่
+คอลัมน์:
+- user_id (BIGINT, PK, FK)          : รหัสผู้ใช้ (เชื่อมกับ users.id / DELETE CASCADE)
+- display_name (VARCHAR(100))       : ชื่อที่ใช้แสดงผลในระบบ
+- level (INT)                       : เลเวลปัจจุบันของผู้ใช้งาน (ค่าเริ่มต้น: 1)
+- current_exp (INT)                 : ค่าประสบการณ์ (EXP) สะสมปัจจุบัน (ค่าเริ่มต้น: 0)
+- current_career_id (BIGINT, FK)    : สายอาชีพที่เลือกเรียนอยู่ปัจจุบัน (เชื่อมกับ careers.id / SET NULL)
+- updated_at (TIMESTAMP)            : วันเวลาที่มีการอัปเดตข้อมูลโปรไฟล์ล่าสุด
+
+--------------------------------------------------------------------------------
+2. หมวดแผนผังทักษะและสายอาชีพ (SKILL TREE & CAREER MODULE)
+--------------------------------------------------------------------------------
+
+[TABLE: careers]
+คำอธิบาย: เก็บข้อมูลสายอาชีพทั้งหมดที่มีในระบบ
+คอลัมน์:
+- id (BIGSERIAL, PK)     : รหัสสายอาชีพ
+- title (VARCHAR(150))   : ชื่อสายอาชีพ (เช่น Software Engineer, Data Scientist)
+- description (TEXT)     : คำอธิบายรายละเอียดของสายอาชีพ
+
+[TABLE: nodes]
+คำอธิบาย: คลังวิชา/โหนดทักษะส่วนกลาง (Master Data) ไม่ยึดติดกับสายอาชีพใดสายอาชีพหนึ่ง
+คอลัมน์:
+- id (BIGSERIAL, PK)     : รหัสวิชา/โหนด
+- title (VARCHAR(150))   : ชื่อวิชา/โหนดทักษะ (เช่น Python Basics, Git Workflow)
+- description (TEXT)     : รายละเอียดเนื้อหาของวิชา
+- exp_reward (INT)       : ค่า EXP ที่ผู้เรียนจะได้รับเมื่อเรียนจบวิชานี้ (ค่าเริ่มต้น: 100)
+
+[TABLE: career_nodes]
+คำอธิบาย: ตารางกลางเชื่อมความสัมพันธ์แบบ Many-to-Many ระหว่าง สายอาชีพ (careers) และ วิชา (nodes)
+คอลัมน์:
+- career_id (BIGINT, PK, FK)  : รหัสสายอาชีพ (เชื่อมกับ careers.id / DELETE CASCADE)
+- node_id (BIGINT, PK, FK)    : รหัสวิชา (เชื่อมกับ nodes.id / DELETE CASCADE)
+- step_order (INT)            : ลำดับขั้นตอนการแสดงผลบน Skill Tree ของสายอาชีพนั้นๆ
+- is_mandatory (BOOLEAN)      : สถานะวิชาบังคับ (TRUE = วิชาบังคับ, FALSE = วิชาเลือก)
+
+[TABLE: node_prerequisites]
+คำอธิบาย: เก็บเงื่อนไขวิชาบังคับก่อนหน้า (Prerequisites) ของแต่ละโหนด
+คอลัมน์:
+- node_id (BIGINT, PK, FK)              : รหัสวิชาหลัก (เชื่อมกับ nodes.id / DELETE CASCADE)
+- prerequisite_node_id (BIGINT, PK, FK) : รหัสวิชาที่ต้องเรียนให้ผ่านก่อน (เชื่อมกับ nodes.id / DELETE CASCADE)
+
+[TABLE: user_node_progress]
+คำอธิบาย: บันทึกสถานะความก้าวหน้าการเรียนของผู้ใช้งานแต่ละคนในแต่ละวิชา
+คอลัมน์:
+- id (BIGSERIAL, PK)         : รหัสบันทึกรายการ
+- user_id (BIGINT, FK)       : รหัสผู้เรียน (เชื่อมกับ users.id / DELETE CASCADE)
+- node_id (BIGINT, FK)       : รหัสวิชา (เชื่อมกับ nodes.id / DELETE CASCADE)
+- status (VARCHAR(20))       : สถานะการเรียน ('locked', 'unlocked', 'completed')
+- completed_at (TIMESTAMP)   : วันเวลาที่เรียนจบวิชานั้นๆ
+เงื่อนไขพิเศษ: UNIQUE (user_id, node_id) เพื่อป้องกันการบันทึกวิชาซ้ำของตัวละครเดิม
+
+--------------------------------------------------------------------------------
+3. หมวดตราความสำเร็จและเกียรติบัตร (ACHIEVEMENTS & CERTIFICATES MODULE)
+--------------------------------------------------------------------------------
+
+[TABLE: achievements]
+คำอธิบาย: เก็บข้อมูลรายการตราความสำเร็จ (Badge) ทั้งหมดที่มีในระบบ
+คอลัมน์:
+- id (BIGSERIAL, PK)     : รหัสตราความสำเร็จ
+- title (VARCHAR(100))   : ชื่อตราความสำเร็จ (เช่น First Step, Math Master)
+- description (TEXT)     : เงื่อนไขการได้รับตราความสำเร็จ
+- icon_url (VARCHAR(512)): ลิงก์รูปภาพไอคอนของ Badge
+
+[TABLE: user_achievements]
+คำอธิบาย: บันทึกรายการตราความสำเร็จที่ผู้ใช้งานแต่ละคนปลดล็อกได้แล้ว
+คอลัมน์:
+- user_id (BIGINT, PK, FK)        : รหัสผู้ใช้ (เชื่อมกับ users.id / DELETE CASCADE)
+- achievement_id (BIGINT, PK, FK) : รหัสตราความสำเร็จ (เชื่อมกับ achievements.id / DELETE CASCADE)
+- unlocked_at (TIMESTAMP)         : วันเวลาที่ปลดล็อกสำเร็จ
+
+[TABLE: certificates]
+คำอธิบาย: เก็บข้อมูลไฟล์เกียรติบัตรดิจิทัล (E-Certificate) ที่ผู้ใช้อัปโหลดเข้าสู่ระบบ
+คอลัมน์:
+- id (BIGSERIAL, PK)      : รหัสเกียรติบัตร
+- user_id (BIGINT, FK)    : รหัสเจ้าของเกียรติบัตร (เชื่อมกับ users.id / DELETE CASCADE)
+- title (VARCHAR(255))    : ชื่อเกียรติบัตร/หลักสูตร
+- issued_by (VARCHAR(150)): ชื่อองค์กร/สถาบันผู้ออกใบประกาศฯ (เช่น Coursera, Udemy)
+- file_url (VARCHAR(512)) : ลิงก์ที่อยู่ไฟล์ภาพหรือไฟล์ PDF ที่จัดเก็บใน Cloud Storage
+- uploaded_at (TIMESTAMP) : วันเวลาที่อัปโหลดไฟล์เข้าระบบ
+
+--------------------------------------------------------------------------------
+4. หมวดระบบสังคมและเพื่อนติว (SOCIAL & STUDY BUDDY MODULE)
+--------------------------------------------------------------------------------
+
+[TABLE: friendships]
+คำอธิบาย: เก็บความสัมพันธ์เพื่อนระหว่างผู้ใช้ (จากการแอดด้วย UID หรือ สแกน QR Code)
+คอลัมน์:
+- id (BIGSERIAL, PK)         : รหัสรายการความสัมพันธ์
+- user_id (BIGINT, FK)       : รหัสผู้ขอแอดเพื่อน (เชื่อมกับ users.id / DELETE CASCADE)
+- friend_id (BIGINT, FK)     : รหัสเพื่อนที่ถูกแอด (เชื่อมกับ users.id / DELETE CASCADE)
+- status (VARCHAR(20))       : สถานะเพื่อน ('pending', 'accepted', 'blocked')
+- created_at (TIMESTAMP)     : วันเวลาที่แอดเพื่อน
+เงื่อนไขพิเศษ: UNIQUE (user_id, friend_id) เพื่อป้องกันการแอดเพื่อนซ้ำ
+
+[TABLE: study_sessions]
+คำอธิบาย: เก็บข้อมูลห้องติว (Study Session Rooms) ที่ผู้ใช้สร้างขึ้น
+คอลัมน์:
+- id (BIGSERIAL, PK)         : รหัสห้องติว
+- host_user_id (BIGINT, FK)  : รหัสผู้ใช้ที่เป็นเจ้าของห้อง (เชื่อมกับ users.id / DELETE CASCADE)
+- node_id (BIGINT, FK)       : รหัสวิชาที่กำลังติวอยู่ (เชื่อมกับ nodes.id / SET NULL)
+- title (VARCHAR(150))       : ชื่อห้องติว
+- is_active (BOOLEAN)        : สถานะห้อง (TRUE = เปิดอยู่, FALSE = ปิดแล้ว)
+- created_at (TIMESTAMP)     : วันเวลาที่สร้างห้อง
+
+[TABLE: session_members]
+คำอธิบาย: บันทึกรายชื่อสมาชิกหรือเพื่อนที่ถูกดึงเข้ามาในห้องติว
+คอลัมน์:
+- session_id (BIGINT, PK, FK): รหัสห้องติว (เชื่อมกับ study_sessions.id / DELETE CASCADE)
+- user_id (BIGINT, PK, FK)   : รหัสผู้ใช้ที่เข้าร่วม (เชื่อมกับ users.id / DELETE CASCADE)
+- joined_at (TIMESTAMP)      : วันเวลาที่เข้าร่วมห้องติว
+
+[TABLE: chat_messages]
+คำอธิบาย: เก็บข้อมูลแช็ตในห้องติว ทั้งข้อความทั่วไป รูป GIF และการ์ดนัดหมาย
+คอลัมน์:
+- id (BIGSERIAL, PK)         : รหัสข้อความ
+- session_id (BIGINT, FK)    : รหัสห้องติว (เชื่อมกับ study_sessions.id / DELETE CASCADE)
+- sender_id (BIGINT, FK)     : รหัสผู้ส่งข้อความ (เชื่อมกับ users.id / DELETE CASCADE)
+- message_type (VARCHAR(20)) : ประเภทข้อความ ('text', 'gif', 'appointment')
+- content (TEXT)             : เนื้อหาข้อความ / ลิงก์รูป GIF / ข้อมูล JSON วันเวลานัดหมาย
+- created_at (TIMESTAMP)     : วันเวลาที่ส่งข้อความ
+
+--------------------------------------------------------------------------------
+5. ดรรชนีเพื่อเพิ่มประสิทธิภาพการดึงข้อมูล (INDEXES)
+--------------------------------------------------------------------------------
+- idx_career_nodes_career     : เร่งความเร็วการดึงข้อมูลรายวิชาทั้งหมดตามสายอาชีพ (career_id)
+- idx_career_nodes_node       : เร่งความเร็วการค้นหาว่าวิชานี้ (node_id) อยู่ในอาชีพไหนบ้าง
+- idx_user_node_progress_user   : เร่งความเร็วการดึงความก้าวหน้า Skill Tree ทั้งหมดของผู้ใช้ (user_id)
+- idx_certificates_user       : เร่งความเร็วการดึงรายการเกียรติบัตรทั้งหมดของผู้ใช้ (user_id)
+- idx_friendships_user        : เร่งความเร็วการดึงรายชื่อเพื่อนทั้งหมดของผู้ใช้ (user_id)
+- idx_study_sessions_host     : เร่งความเร็วการดึงห้องติวทั้งหมดที่ผู้ใช้คนนี้เป็น Host (host_user_id)
+- idx_chat_messages_session   : เร่งความเร็วการดึงข้อความแช็ตทั้งหมดภายในห้องติว (session_id)
+================================================================================

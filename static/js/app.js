@@ -13,7 +13,10 @@ const state = {
   selectedSkillId: null,
   selectedSubject: "all",
   toastTimer: null,
+  careerId: new URLSearchParams(window.location.search).get("career") || null,
 };
+
+const DEFAULT_PLAN_WEEKLY_HOURS = 6;
 
 const elements = {
   loading: document.querySelector("#loading-overlay"),
@@ -55,21 +58,37 @@ function escapeHtml(value) {
 
 /** Call a JSON API and turn non-2xx responses into readable errors. */
 async function apiRequest(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  // Never let the loading screen spin forever: abort requests that the
+  // server does not answer in time so the page shows a readable error
+  // instead of hanging (e.g. when the database is unreachable).
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+      signal: options.signal || controller.signal,
+    });
 
-  const payload = await response.json().catch(() => ({
-    ok: false,
-    error: "Server did not return valid JSON",
-  }));
+    const payload = await response.json().catch(() => ({
+      ok: false,
+      error: "Server did not return valid JSON",
+    }));
 
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error || `Request failed: ${response.status}`);
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Request failed: ${response.status}`);
+    }
+
+    return payload;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("เซิร์ฟเวอร์ไม่ตอบกลับภายใน 15 วินาที — เชื่อมต่อฐานข้อมูลไม่ได้?");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
   }
-
-  return payload;
 }
 
 /** Show a small non-blocking message at the bottom-right of the screen. */
@@ -118,6 +137,8 @@ function renderOverview() {
   elements.careerIcon.textContent = career.icon;
   elements.careerTitle.textContent = `${career.name} Roadmap`;
   elements.careerDescription.textContent = career.description;
+  document.querySelector("#career-progress-title").textContent =
+    `เส้นทางสู่${career.thaiName || career.name}`;
 
   elements.careerProgressValue.textContent = `${progress.career}%`;
   elements.careerProgressBar.style.width = `${progress.career}%`;
@@ -248,7 +269,7 @@ function statusIcon(status) {
   return "×";
 }
 
-/** Render the clickable skill nodes using coordinates stored in database.json. */
+/** Render the clickable skill nodes using coordinates from the backend. */
 function renderNodes() {
   elements.nodeLayer.innerHTML = state.roadmap.nodes
     .map((skill) => {
@@ -336,6 +357,47 @@ function statusLabel(status) {
 
 function renderBulletList(items) {
   return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function currentLocalDateIso() {
+  const now = new Date();
+  const offsetMinutes = now.getTimezoneOffset();
+  return new Date(now.getTime() - offsetMinutes * 60_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function renderPlanPreview(plan) {
+  const weeks = plan.weeks || [];
+  return `
+    <div class="path-result plan-result">
+      <h3>แผนเรียนรายสัปดาห์</h3>
+      <p class="detail-description">
+        ใช้ ${escapeHtml(plan.weeklyHours)} ชั่วโมง/สัปดาห์ เริ่ม ${escapeHtml(plan.startDate)}
+        และคาดว่าจะจบประมาณ ${escapeHtml(plan.estimatedCompletionDate)}
+      </p>
+      <div class="detail-meta">
+        <span class="meta-chip">รวม ${escapeHtml(plan.totalHours)} ชั่วโมง</span>
+        <span class="meta-chip">เหลือ ${escapeHtml(plan.remainingSkillCount)} skill</span>
+      </div>
+      ${
+        weeks.length
+          ? `<ol class="path-list">${weeks
+              .map(
+                (week) => `<li>
+                    Week ${escapeHtml(week.weekNumber)} · ${escapeHtml(week.plannedHours)}h
+                    <small>(${escapeHtml(week.startDate)} - ${escapeHtml(week.endDate)})</small>
+                    <ul>${week.assignments
+                      .map(
+                        (assignment) => `<li>${escapeHtml(assignment.name)} · ${escapeHtml(assignment.hours)}h</li>`
+                      )
+                      .join("")}</ul>
+                  </li>`
+              )
+              .join("")}</ol>`
+          : '<p class="detail-description">ยังไม่มีทักษะที่ต้องแบ่งเป็นหลายสัปดาห์</p>'
+      }
+    </div>`;
 }
 
 /** Open a skill and build its complete detail panel from roadmap JSON. */
@@ -468,7 +530,7 @@ async function toggleSkill(skillId, completed) {
   try {
     const payload = await apiRequest("/api/progress", {
       method: "POST",
-      body: JSON.stringify({ skillId, completed }),
+      body: JSON.stringify({ skillId, completed, careerId: state.careerId }),
     });
 
     state.roadmap = payload.data.roadmap;
@@ -528,7 +590,10 @@ async function loadRoadmap(showFullLoading = true) {
 
   try {
     const subjectQuery = encodeURIComponent(state.selectedSubject);
-    const payload = await apiRequest(`/api/roadmap?subject=${subjectQuery}`);
+    const careerQuery = state.careerId
+      ? `&career=${encodeURIComponent(state.careerId)}`
+      : "";
+    const payload = await apiRequest(`/api/roadmap?subject=${subjectQuery}${careerQuery}`);
     state.roadmap = payload.data;
     renderAll();
 
@@ -552,7 +617,10 @@ elements.resetButton.addEventListener("click", async () => {
   if (!confirmed) return;
 
   try {
-    const payload = await apiRequest("/api/reset", { method: "POST" });
+    const payload = await apiRequest("/api/reset", {
+      method: "POST",
+      body: JSON.stringify({ careerId: state.careerId }),
+    });
     state.roadmap = payload.data;
     state.selectedSkillId = null;
     elements.skillDetail.classList.add("hidden");
