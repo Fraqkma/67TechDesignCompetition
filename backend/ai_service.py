@@ -22,7 +22,7 @@ class AIService:
     def _resolve_model() -> str:
         model = os.getenv("AI_MODEL", "").strip()
         if not model:
-            raise RuntimeError("AI_MODEL is not configured")
+            return "gpt-4o-mini"
         return model
 
     @staticmethod

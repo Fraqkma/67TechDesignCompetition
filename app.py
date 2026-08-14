@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, render_template, request
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - fallback for minimal environments
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from backend import (
     AIAnalyzer,
