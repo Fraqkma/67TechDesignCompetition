@@ -58,21 +58,37 @@ function escapeHtml(value) {
 
 /** Call a JSON API and turn non-2xx responses into readable errors. */
 async function apiRequest(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  // Never let the loading screen spin forever: abort requests that the
+  // server does not answer in time so the page shows a readable error
+  // instead of hanging (e.g. when the database is unreachable).
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+      signal: options.signal || controller.signal,
+    });
 
-  const payload = await response.json().catch(() => ({
-    ok: false,
-    error: "Server did not return valid JSON",
-  }));
+    const payload = await response.json().catch(() => ({
+      ok: false,
+      error: "Server did not return valid JSON",
+    }));
 
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error || `Request failed: ${response.status}`);
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Request failed: ${response.status}`);
+    }
+
+    return payload;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("เซิร์ฟเวอร์ไม่ตอบกลับภายใน 15 วินาที — เชื่อมต่อฐานข้อมูลไม่ได้?");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
   }
-
-  return payload;
 }
 
 /** Show a small non-blocking message at the bottom-right of the screen. */
@@ -553,7 +569,6 @@ async function buildPath(skillId) {
             : "<p class=\"detail-description\">เรียนเส้นทางนี้ครบแล้ว</p>"
         }
       </div>`;
-      ${planMarkup}
   } catch (error) {
     resultContainer.innerHTML = "";
     showToast(error.message, "error");

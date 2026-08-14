@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -26,6 +26,7 @@ from backend import (
     GraphEngine,
     GraphValidationError,
     JsonStore,
+    PlanService,
     TeachingAssistant,
     db_store,
 )
@@ -43,18 +44,37 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 # PostgreSQL Configuration
 # =========================================================
 
+# Strictly follow .env — never fall back to hardcoded values, otherwise a
+# missing key silently connects to the wrong database and the page hangs on
+# the loading screen. SERVER_IP / POSTGRES_* are the primary keys used by
+# this project; DB_HOST / DB_* are kept as legacy aliases.
 DB_CONFIG = {
-    "host": os.getenv("SERVER_IP") or os.getenv("DB_HOST", "localhost"),
-    "port": os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT", "5432"),
-    "database": os.getenv("POSTGRES_DB_NAME") or os.getenv("DB_NAME", "skilltree_db"),
-    "user": os.getenv("POSTGRES_USER") or os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD", ""),
+    "host": os.getenv("SERVER_IP") or os.getenv("DB_HOST"),
+    "port": os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT"),
+    "database": os.getenv("POSTGRES_DB_NAME") or os.getenv("DB_NAME"),
+    "user": os.getenv("POSTGRES_USER") or os.getenv("DB_USER"),
+    "password": os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD"),
 }
+
+_missing_db_keys = [
+    key for key, value in DB_CONFIG.items() if value is None
+]
+if _missing_db_keys:
+    raise RuntimeError(
+        "Database is not configured. Add these keys to .env: "
+        + ", ".join(_missing_db_keys)
+    )
 
 
 def get_db():
-    """Create a PostgreSQL connection."""
-    return psycopg2.connect(**DB_CONFIG)
+    """Create a PostgreSQL connection.
+
+    ``connect_timeout`` keeps an unreachable host (for example a database on
+    another network, which is the usual cause of the page hanging on the
+    loading screen) from blocking requests for minutes: the connection now
+    fails after a few seconds and returns a readable error.
+    """
+    return psycopg2.connect(connect_timeout=5, **DB_CONFIG)
 
 
 # =========================================================
@@ -708,6 +728,12 @@ def create_app(database_path: str | None = None) -> Flask:
                 str(exc),
                 404,
             )
+        except psycopg2.Error as exc:
+            return error(
+                "Database connection failed",
+                500,
+                str(exc),
+            )
         except (
             GraphValidationError,
             ValueError,
@@ -761,6 +787,12 @@ def create_app(database_path: str | None = None) -> Flask:
             return error(
                 str(exc),
                 404,
+            )
+        except psycopg2.Error as exc:
+            return error(
+                "Database connection failed",
+                500,
+                str(exc),
             )
         except (
             GraphValidationError,
@@ -816,6 +848,12 @@ def create_app(database_path: str | None = None) -> Flask:
             return error(
                 str(exc),
                 404,
+            )
+        except psycopg2.Error as exc:
+            return error(
+                "Database connection failed",
+                500,
+                str(exc),
             )
         except (
             GraphValidationError,
@@ -1230,8 +1268,15 @@ def create_app(database_path: str | None = None) -> Flask:
             )
 
         try:
-
-            _, engine, completed = load_engine()
+            user_id = logged_in_user_id()
+            career_id = resolve_career_id(body.get("careerId"), user_id)
+            _, engine, _ = load_engine(career_id)
+            completed = (
+                load_completed_for_user(user_id, engine)
+                if user_id is not None
+                else set()
+            )
+            analysis = AIAnalyzer.analyze(engine, completed)
 
             answer = AIService.ask_chat(
                 message,
@@ -1242,8 +1287,7 @@ def create_app(database_path: str | None = None) -> Flask:
 
             return success(
                 {
-                    "answer": answer
-                    ,
+                    "answer": answer,
                     "recommendedSkill": analysis["nextSkill"],
                     "reason": analysis["reason"],
                 },
