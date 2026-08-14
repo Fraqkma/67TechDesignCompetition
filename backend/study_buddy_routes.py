@@ -7,8 +7,8 @@ from typing import Any, Callable
 import psycopg2
 from flask import Blueprint, jsonify, redirect, render_template, request, session
 
-from backend.json_store import JsonStore
 from backend.graph_engine import GraphEngine, GraphValidationError
+from backend import db_store
 from backend import study_buddy_store as social_store
 from backend.study_buddy_service import (
     build_buddy_match,
@@ -20,13 +20,10 @@ from backend.study_buddy_service import (
 
 def create_study_buddy_blueprint(
     get_db: Callable,
-    database_path: str,
-    ensure_user_tables: Callable,
 ) -> Blueprint:
-    """Create the Blueprint while reusing the original app's DB connector."""
+    """Create the Blueprint using the original app's PostgreSQL connector."""
 
     blueprint = Blueprint("study_buddy", __name__)
-    graph_store = JsonStore(database_path)
 
     def success(data: Any = None, message: str | None = None, status: int = 200):
         payload: dict[str, Any] = {"ok": True}
@@ -53,23 +50,24 @@ def create_study_buddy_blueprint(
         return user_id
 
     def ensure_tables(conn) -> None:
-        ensure_user_tables(conn)
+        db_store.ensure_schema(conn)
         social_store.ensure_social_schema(conn)
 
     def load_completed(conn, user_id: int, engine: GraphEngine) -> set[str]:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT skill_id FROM user_skill_progress WHERE user_id = %s",
-                (user_id,),
-            )
-            return engine.clean_completed(row[0] for row in cur.fetchall())
+        return engine.clean_completed(
+            db_store.load_completed_node_ids(conn, user_id)
+        )
 
     def load_user_graph(conn, user_id: int):
-        database = graph_store.read()
+        career_id = db_store.user_career_id(conn, user_id)
+        if career_id is None:
+            career_id = db_store.first_career_id(conn)
+        if career_id is None:
+            raise GraphValidationError("No careers are configured")
+        database = db_store.load_database(conn, career_id)
         engine = GraphEngine(database)
-        career_id = str(engine.career["id"])
         completed = load_completed(conn, user_id, engine)
-        return career_id, engine, completed
+        return str(career_id), engine, completed
 
     def enrich_group(group: dict[str, Any], engine: GraphEngine):
         group["careerName"] = engine.career["name"]
