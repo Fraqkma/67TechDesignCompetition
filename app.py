@@ -22,6 +22,7 @@ from backend import (
     JsonStore,
     TeachingAssistant,
 )
+from backend.study_buddy_routes import create_study_buddy_blueprint
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -116,6 +117,16 @@ def create_app(database_path: str | Path | None = None) -> Flask:
     )
 
     store = JsonStore(app.config["DATABASE_PATH"])
+
+    # Study Buddy is registered in the main factory so the original launcher,
+    # tests, and every app instance expose the same social feature set.
+    app.register_blueprint(
+        create_study_buddy_blueprint(
+            get_db,
+            app.config["DATABASE_PATH"],
+            ensure_user_tables,
+        )
+    )
 
     # =====================================================
     # Response Helpers

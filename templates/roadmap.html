@@ -18,6 +18,10 @@
       rel="stylesheet"
       href="{{ url_for('static', filename='css/style.css') }}"
     />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/study-buddy-panel.css') }}"
+    />
   </head>
   <body class="roadmap-page">
     <div class="app-shell">
@@ -31,6 +35,14 @@
         </a>
 
         <div class="topbar-actions">
+          <a
+            class="button primary buddy-nav-button"
+            href="/study-buddy#friends"
+            aria-label="เพิ่มเพื่อนและจัดการคำขอเป็นเพื่อน"
+          >
+            <span class="buddy-nav-icon" aria-hidden="true">＋</span>
+            <span class="buddy-nav-label">Add Friend</span>
+          </a>
           <a class="button ghost" href="/profile">Profile</a>
           <span class="api-status" id="api-status">
             <span class="status-dot"></span>
@@ -196,6 +208,45 @@
               </div>
             </article>
 
+            <article class="study-buddy-inline-card" id="study-buddy-panel">
+              <div class="section-heading-inline buddy-panel-heading">
+                <div>
+                  <span class="eyebrow">Study Buddy by Subject</span>
+                  <h2>เพื่อนร่วมเรียนแต่ละวิชา</h2>
+                </div>
+                <span class="buddy-online-count" id="buddy-match-count">—</span>
+              </div>
+
+              <p class="buddy-panel-intro">
+                จับคู่จาก Skill ที่พร้อมเรียนและความถนัดจริงใน Graph ของคุณ
+              </p>
+
+              <div
+                class="buddy-subject-tabs"
+                id="buddy-subject-tabs"
+                role="tablist"
+                aria-label="เลือกวิชาสำหรับ Study Buddy"
+              >
+                <span class="buddy-panel-loading">กำลังโหลด Subject...</span>
+              </div>
+
+              <div
+                class="buddy-subject-content"
+                id="buddy-subject-content"
+                role="tabpanel"
+                aria-live="polite"
+              >
+                <div class="buddy-panel-loading">กำลังค้นหาเพื่อนร่วมเรียน...</div>
+              </div>
+
+              <div class="buddy-panel-footer">
+                <span id="buddy-panel-status" role="status"></span>
+                <a class="buddy-manage-link" href="/study-buddy">
+                  เปิด Friend Hub <span aria-hidden="true">→</span>
+                </a>
+              </div>
+            </article>
+
             <article class="achievement-card">
               <div class="section-heading-inline">
                 <div>
@@ -219,5 +270,6 @@
 
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/ai.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/study-buddy-panel.js') }}" defer></script>
   </body>
 </html>
