@@ -1,0 +1,550 @@
+/* ============================================================
+   Enlightenment Compass — cosmic theme overlay
+   ------------------------------------------------------------
+   Loaded AFTER style.css / home.css / each page's own inline
+   <style> block, so equal-specificity rules here win by source
+   order. Overrides color, type, and adds HUD-frame decoration
+   only — no layout, markup, class/id, or JS behavior changes.
+
+   Scope note: skill-node subject borders and subject-filter chip
+   colors (--subject-color / --filter-color) are set inline by
+   app.js from real per-subject data in the database, not decor —
+   they are intentionally left alone so subjects stay visually
+   distinguishable.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Sarabun:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap');
+
+/* ---------- 1. shared design tokens ----------
+   style.css and login.html's own inline <style> block both define
+   a `:root` with these exact property names, so one override here
+   re-themes every page that reads them. */
+
+:root {
+  --background: #0a0812;
+  --surface: #120f1e;
+  --surface-2: #1b1730;
+  --surface-3: #251f3d;
+  --border: rgba(184, 171, 224, 0.16);
+  --border-strong: rgba(184, 171, 224, 0.34);
+  --text: #f4efe4;
+  --text-muted: #9791ac;
+  --accent: #52d6e8;
+  --accent-strong: #2fbed6;
+  --available: #52d6e8;
+  --completed: #ffb454;
+  --locked: #524c6b;
+  --recommended: #ff6083;
+  --danger: #ff6083;
+  --shadow: 0 24px 70px rgba(5, 3, 10, 0.42);
+}
+
+/* ---------- 2. typography ---------- */
+
+html,
+body {
+  font-family: "Sarabun", "Noto Sans Thai", ui-sans-serif, sans-serif;
+}
+
+.roadmap-page {
+  font-family: "Sarabun", "Noto Sans Thai", "Segoe UI", sans-serif;
+}
+
+h1,
+h2,
+h3,
+.eyebrow,
+.recommendation-kicker,
+.brand strong,
+.button,
+.filter-button,
+.home-badge,
+.track-card h3,
+.hero h1,
+.login-header h2,
+.login-button,
+.show-password {
+  font-family: "Chakra Petch", "Noto Sans Thai", sans-serif;
+}
+
+.brand-mark,
+.career-icon,
+.rank-avatar,
+.api-status,
+.progress-number,
+.track-icon,
+.splash-mark,
+.home-feature-icon,
+.status-badge,
+.node-copy small {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+::selection {
+  background: rgba(82, 214, 232, 0.25);
+  color: var(--text);
+}
+
+/* ---------- 3. HUD corner-bracket card frame ----------
+   Same 8-layer background-image trick used on the preview; added
+   as background-image only so it layers on top of each card's
+   existing background-color without disturbing it. */
+
+.progress-card,
+.subject-progress-list,
+.map-card,
+.recommendation-card,
+.detail-card,
+.achievement-card,
+.ai-card,
+.track-card,
+.home-feature-card,
+.login-card,
+body:has(#register-form) main,
+body:has(#profile-form) main {
+  --bc: var(--border-strong);
+  background-color: rgba(18, 15, 30, 0.86);
+  background-image: linear-gradient(var(--bc), var(--bc)),
+    linear-gradient(var(--bc), var(--bc)), linear-gradient(var(--bc), var(--bc)),
+    linear-gradient(var(--bc), var(--bc)), linear-gradient(var(--bc), var(--bc)),
+    linear-gradient(var(--bc), var(--bc)), linear-gradient(var(--bc), var(--bc)),
+    linear-gradient(var(--bc), var(--bc));
+  background-repeat: no-repeat;
+  background-size: 2px 13px, 13px 2px, 2px 13px, 13px 2px, 2px 13px, 13px 2px, 2px 13px,
+    13px 2px;
+  background-position: 0 0, 0 0, 100% 0, 100% 0, 0 100%, 0 100%, 100% 100%, 100% 100%;
+}
+
+/* ---------- 4. body ambient glow (index / select-track / roadmap) ---------- */
+
+body {
+  background: radial-gradient(ellipse 70% 55% at 22% 15%, rgba(82, 214, 232, 0.07), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 82% 78%, rgba(255, 96, 131, 0.06), transparent 60%),
+    var(--background);
+}
+
+/* ---------- 4b. shared full-page starfield (all pages) ----------
+   Fixed canvas painted by static/js/starfield.js, z-index below every
+   normal-flow element so it reads as open space behind translucent
+   cards without needing per-page stacking changes. */
+
+#cosmic-starfield-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* ---------- 4c. shared topbar user cluster (Profile / display name) ---------- */
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  text-decoration: none;
+  background: rgba(18, 15, 30, 0.5);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.profile-chip:hover {
+  border-color: var(--accent);
+  background: rgba(82, 214, 232, 0.08);
+}
+
+.avatar-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  background: rgba(82, 76, 107, 0.18);
+}
+
+.profile-chip .user-name {
+  color: var(--text);
+}
+
+.user-name {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---------- 5. style.css world: literal-color spots that don't
+   read from a CSS variable ---------- */
+
+.brand-mark {
+  border-color: rgba(82, 214, 232, 0.55);
+  background: rgba(82, 214, 232, 0.09);
+  box-shadow: inset 0 0 24px rgba(82, 214, 232, 0.05);
+}
+
+.button.primary {
+  color: var(--background);
+  box-shadow: 0 10px 26px rgba(82, 214, 232, 0.2);
+}
+
+.career-icon {
+  border-color: rgba(82, 214, 232, 0.4);
+  background: linear-gradient(145deg, rgba(82, 214, 232, 0.14), transparent), var(--surface);
+}
+
+.rank-avatar {
+  color: var(--background);
+}
+
+.topbar-search input:focus {
+  border-color: rgba(82, 214, 232, 0.55);
+  box-shadow: 0 0 0 3px rgba(82, 214, 232, 0.12);
+}
+
+.graph-world {
+  background: linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    radial-gradient(circle at 50% 45%, rgba(82, 214, 232, 0.035), transparent 45%);
+  background-size: 30px 30px, 30px 30px, auto;
+}
+
+.beginner-zone {
+  background: rgba(255, 180, 84, 0.02);
+}
+
+.intermediate-zone {
+  background: rgba(82, 214, 232, 0.02);
+}
+
+.advanced-zone {
+  background: rgba(255, 96, 131, 0.02);
+}
+
+.graph-edge.completed {
+  stroke: rgba(255, 180, 84, 0.66);
+}
+
+.graph-edge.available {
+  stroke: rgba(82, 214, 232, 0.55);
+}
+
+.skill-node {
+  background: rgba(18, 15, 30, 0.94);
+}
+
+.skill-node:hover,
+.skill-node.selected {
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+}
+
+.skill-node.locked {
+  background: rgba(18, 15, 30, 0.72);
+}
+
+.skill-node.available {
+  box-shadow: 0 0 0 1px rgba(82, 214, 232, 0.18), 0 0 28px rgba(82, 214, 232, 0.1);
+}
+
+.skill-node.completed {
+  background: linear-gradient(135deg, rgba(255, 180, 84, 0.14), transparent), rgba(18, 15, 30, 0.96);
+}
+
+.skill-node.recommended::after {
+  border-color: var(--recommended);
+}
+
+@keyframes recommendation-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    box-shadow: 0 0 0 0 rgba(255, 96, 131, 0.22);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 7px rgba(255, 96, 131, 0);
+  }
+}
+
+.node-state-icon {
+  background: rgba(82, 214, 232, 0.12);
+}
+
+.completed .node-state-icon {
+  color: var(--background);
+}
+
+.locked .node-state-icon {
+  color: #8f88a8;
+  background: rgba(82, 76, 107, 0.16);
+}
+
+.recommendation-card {
+  border-color: rgba(255, 96, 131, 0.28);
+  background: radial-gradient(circle at 100% 0%, rgba(255, 96, 131, 0.14), transparent 45%), var(--surface);
+}
+
+.ai-key-box input:focus,
+.ai-chat-input textarea:focus {
+  border-color: rgba(82, 214, 232, 0.5);
+  box-shadow: 0 0 0 3px rgba(82, 214, 232, 0.12);
+}
+
+.ai-summary {
+  background: rgba(82, 214, 232, 0.05);
+}
+
+.ai-message.bot {
+  background: rgba(185, 139, 255, 0.1);
+}
+
+.ai-message.user {
+  background: rgba(82, 214, 232, 0.08);
+}
+
+.status-badge.completed {
+  border-color: rgba(255, 180, 84, 0.35);
+}
+
+.status-badge.available {
+  border-color: rgba(82, 214, 232, 0.35);
+}
+
+.prerequisite-chip.done {
+  border-color: rgba(255, 180, 84, 0.3);
+}
+
+.locked-message {
+  border-color: rgba(82, 214, 232, 0.22);
+  color: #a9dce6;
+  background: rgba(82, 214, 232, 0.06);
+}
+
+.path-result {
+  border-color: rgba(82, 214, 232, 0.22);
+  background: rgba(82, 214, 232, 0.05);
+}
+
+.achievement-item.unlocked {
+  border-color: rgba(255, 180, 84, 0.32);
+  background: rgba(255, 180, 84, 0.06);
+}
+
+.loader {
+  border-color: rgba(82, 214, 232, 0.16);
+  border-top-color: var(--accent);
+}
+
+.toast {
+  border-color: var(--border-strong);
+}
+
+.toast.error {
+  border-color: rgba(255, 96, 131, 0.45);
+}
+
+/* ---------- 6. home.css world: literal-color spots ---------- */
+
+.home-badge {
+  border-color: rgba(82, 214, 232, 0.35);
+  background: rgba(82, 214, 232, 0.09);
+}
+
+.home-hero .accent-text {
+  background: linear-gradient(135deg, var(--accent), var(--recommended));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.home-feature-icon {
+  border-color: rgba(82, 214, 232, 0.4);
+  background: rgba(82, 214, 232, 0.1);
+}
+
+.splash-mark {
+  border-color: rgba(82, 214, 232, 0.5);
+  background: rgba(82, 214, 232, 0.1);
+}
+
+.track-card.active {
+  border-color: rgba(82, 214, 232, 0.4);
+}
+
+.track-card.active:hover {
+  border-color: rgba(82, 214, 232, 0.7);
+  box-shadow: 0 20px 46px rgba(82, 214, 232, 0.16);
+}
+
+.track-icon {
+  border-color: rgba(82, 214, 232, 0.4);
+  background: rgba(82, 214, 232, 0.1);
+}
+
+.track-card.locked .track-icon {
+  border-color: rgba(82, 76, 107, 0.45);
+  background: rgba(82, 76, 107, 0.14);
+}
+
+.track-status.available {
+  background: rgba(82, 214, 232, 0.12);
+}
+
+.track-status.locked {
+  background: rgba(82, 76, 107, 0.18);
+}
+
+/* ---------- 7. login.html: its own :root already re-themed by
+   section 1 — these are the literal-color decorative spots ---------- */
+
+.login-page .graph-decoration {
+  background: linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px), rgba(18, 15, 30, 0.65);
+}
+
+.login-page .graph-line {
+  background: rgba(82, 214, 232, 0.28);
+}
+
+.login-page .graph-node {
+  border-color: rgba(82, 214, 232, 0.45);
+  background: var(--surface);
+  box-shadow: 0 0 25px rgba(82, 214, 232, 0.1);
+}
+
+.login-page .node-4 {
+  border-color: rgba(255, 96, 131, 0.45);
+  color: var(--recommended);
+}
+
+.login-page .login-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.045), transparent 55%), rgba(18, 15, 30, 0.92);
+}
+
+.login-page .login-button {
+  color: var(--background);
+  box-shadow: 0 10px 26px rgba(82, 214, 232, 0.22);
+}
+
+.login-page .login-button:hover:not(:disabled) {
+  box-shadow: 0 14px 32px rgba(82, 214, 232, 0.28);
+}
+
+.login-page .show-password:hover {
+  color: var(--accent);
+  background: rgba(82, 214, 232, 0.07);
+}
+
+.login-page .input-wrapper input:focus {
+  border-color: rgba(82, 214, 232, 0.55);
+  box-shadow: 0 0 0 3px rgba(82, 214, 232, 0.14);
+}
+
+.login-page .security-dot {
+  background: var(--completed);
+  box-shadow: 0 0 10px var(--completed);
+}
+
+/* ---------- 8. register.html + profile.html ----------
+   Neither page has a wrapper class to hook into and neither uses
+   CSS variables at all (every color is a hardcoded literal), so
+   these are scoped through the one element each page's markup
+   already has that nothing else on the site does: its own <form>
+   id. :has() is supported by all current major browsers. */
+
+body:has(#register-form),
+body:has(#profile-form) {
+  background: radial-gradient(circle at 10% 15%, rgba(82, 214, 232, 0.14), transparent 32rem),
+    radial-gradient(circle at 90% 100%, rgba(185, 139, 255, 0.14), transparent 35rem), var(--background);
+  color: var(--text);
+}
+
+body:has(#register-form) main,
+body:has(#profile-form) main {
+  border-color: var(--border);
+  background: rgba(18, 15, 30, 0.92);
+  box-shadow: var(--shadow);
+}
+
+body:has(#register-form) .brand,
+body:has(#profile-form) .eyebrow {
+  color: var(--accent);
+  font-family: "Chakra Petch", "Noto Sans Thai", sans-serif;
+}
+
+body:has(#register-form) h1,
+body:has(#profile-form) h1 {
+  font-family: "Chakra Petch", "Noto Sans Thai", sans-serif;
+  color: var(--text);
+}
+
+body:has(#register-form) p,
+body:has(#profile-form) p {
+  color: var(--text-muted);
+}
+
+body:has(#register-form) label,
+body:has(#profile-form) label {
+  color: var(--text);
+}
+
+body:has(#register-form) input,
+body:has(#profile-form) input {
+  border-color: var(--border);
+  background: rgba(10, 8, 18, 0.75);
+  color: var(--text);
+}
+
+body:has(#register-form) input:focus,
+body:has(#profile-form) input:focus {
+  border-color: rgba(82, 214, 232, 0.55);
+  box-shadow: 0 0 0 3px rgba(82, 214, 232, 0.15);
+}
+
+body:has(#register-form) input:disabled,
+body:has(#profile-form) input:disabled {
+  color: var(--text-muted);
+}
+
+body:has(#register-form) button,
+body:has(#profile-form) button {
+  font-family: "Chakra Petch", "Noto Sans Thai", sans-serif;
+}
+
+body:has(#register-form) #submit,
+body:has(#profile-form) #save {
+  background: linear-gradient(100deg, var(--accent), #8ff0ff);
+  color: var(--background);
+}
+
+body:has(#profile-form) #logout {
+  border: 1px solid rgba(255, 96, 131, 0.4);
+  color: var(--recommended);
+  background: transparent;
+}
+
+body:has(#register-form) #error {
+  color: var(--recommended);
+}
+
+body:has(#profile-form) #message {
+  color: var(--completed);
+}
+
+body:has(#profile-form) #message.error {
+  color: var(--recommended);
+}
+
+body:has(#register-form) footer a,
+body:has(#profile-form) header a {
+  color: var(--accent);
+}

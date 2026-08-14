@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <title>Login — SkillGraph</title>
+  <title>Login — Enlightenment Compass</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -705,9 +705,12 @@
       }
     }
   </style>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/cosmic-theme.css') }}">
 </head>
 
 <body>
+  <canvas id="cosmic-starfield-bg" aria-hidden="true"></canvas>
 
   <main class="login-page">
 
@@ -718,11 +721,11 @@
     <section class="hero">
 
       <a class="brand" href="/">
-        <span class="brand-mark">SG</span>
+        <span class="brand-mark">EC</span>
 
         <span>
-          <strong>SkillGraph</strong>
-          <small>Learning Path Intelligence</small>
+          <strong>Enlightenment Compass</strong>
+          <small>Learning Skill Tree</small>
         </span>
       </a>
 
@@ -785,7 +788,7 @@
         </h2>
 
         <p>
-          Login เพื่อกลับไปยัง SkillGraph ของคุณ
+          Login เพื่อกลับไปยัง Enlightenment Compass ของคุณ
         </p>
 
       </div>
@@ -896,14 +899,14 @@
       <div class="security-note">
         <span class="security-dot"></span>
 
-        Secure authentication via SkillGraph API
+        Secure authentication via Enlightenment Compass API
       </div>
 
     </section>
 
   </main>
 
-
+  <script src="{{ url_for('static', filename='js/starfield.js') }}" defer></script>
   <script>
 
     const loginForm = document.getElementById("loginForm");
