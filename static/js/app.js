@@ -117,20 +117,6 @@ function getSubject(subjectId) {
   );
 }
 
-/** Determine the simple avatar rank from weighted career progress. */
-function getRank(progress) {
-  if (progress >= 90) {
-    return { code: "04", name: "Career Ready", hint: "พร้อมต่อยอดสู่โปรเจกต์จริง" };
-  }
-  if (progress >= 60) {
-    return { code: "03", name: "System Builder", hint: "กำลังเชื่อมฮาร์ดแวร์และซอฟต์แวร์" };
-  }
-  if (progress >= 30) {
-    return { code: "02", name: "Core Learner", hint: "มีพื้นฐานและเริ่มเรียนวิชาหลัก" };
-  }
-  return { code: "01", name: "Starter", hint: "เริ่มเรียน Skill แรกเพื่อพัฒนา Rank" };
-}
-
 /** Render career title, progress bars and avatar rank. */
 function renderOverview() {
   const { career, progress } = state.roadmap;
@@ -147,7 +133,8 @@ function renderOverview() {
     `เรียนแล้ว ${progress.completedCount} จาก ${progress.totalCount} Skills ` +
     `(${progress.completedWeight}/${progress.totalWeight} คะแนน)`;
 
-  const rank = getRank(progress.career);
+  // Rank is chosen server-side from the ranks table (database).
+  const rank = state.roadmap.rank || { code: "01", name: "Starter", hint: "" };
   elements.rankAvatar.textContent = rank.code;
   elements.rankName.textContent = rank.name;
   elements.rankHint.textContent = rank.hint;
@@ -329,21 +316,25 @@ function renderRecommendation() {
 }
 
 function renderAchievements() {
-  const unlockedCount = state.roadmap.achievements.filter(
+  const achievements = state.roadmap.achievements || [];
+  const unlockedCount = achievements.filter(
     (achievement) => achievement.unlocked
   ).length;
-  elements.achievementCount.textContent = `${unlockedCount}/${state.roadmap.achievements.length}`;
+  elements.achievementCount.textContent = `${unlockedCount}/${achievements.length}`;
 
-  elements.achievementGrid.innerHTML = state.roadmap.achievements
-    .map(
-      (achievement) => `
+  elements.achievementGrid.innerHTML = achievements
+    .map((achievement) => {
+      const icon = achievement.iconUrl
+        ? `<img class="achievement-img" src="${escapeHtml(achievement.iconUrl)}" alt="" loading="lazy">`
+        : `<span class="achievement-icon">🎖</span>`;
+      return `
         <div class="achievement-item ${achievement.unlocked ? "unlocked" : ""}"
              title="${escapeHtml(achievement.description)}">
-          <span class="achievement-icon">${escapeHtml(achievement.icon)}</span>
+          ${icon}
           <strong>${escapeHtml(achievement.name)}</strong>
           <small>${escapeHtml(achievement.description)}</small>
-        </div>`
-    )
+        </div>`;
+    })
     .join("");
 }
 

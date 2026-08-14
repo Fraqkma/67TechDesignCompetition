@@ -267,65 +267,41 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(mocked_ask_chat.called)
 
     def test_plan_preview_endpoint_returns_schedule(self) -> None:
-        class FakeCursor:
-            def __init__(self, rows):
-                self.rows = rows
-                self.last_query = ""
+        """Schedule the DB graph for the signed-in user (no fixtures)."""
 
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def execute(self, query, params=None):
-                self.last_query = query
-
-            def fetchall(self):
-                if "SELECT skill_id FROM user_skill_progress" in self.last_query:
-                    return self.rows
-                return []
-
-        class FakeConnection:
-            def __init__(self, rows):
-                self.rows = rows
-
-            def cursor(self):
-                return FakeCursor(self.rows)
-
-            def commit(self):
-                return None
-
-            def rollback(self):
-                return None
-
-            def close(self):
-                return None
-
-        fake_connection = FakeConnection([("basic_algebra",)])
-
-        with patch("app.get_db", return_value=fake_connection):
-            with self.client.session_transaction() as session:
-                session["user_id"] = 1
-
-            response = self.client.post(
-                "/api/plan/preview",
-                json={
-                    "targetSkillId": "functions_graphs",
-                    "weeklyHours": 6,
-                    "startDate": "2026-08-17",
-                },
-            )
+        response = self.client.post(
+            "/api/plan/preview",
+            json={
+                "targetSkillId": self.locked_node,
+                "weeklyHours": 6,
+                "startDate": "2026-08-17",
+            },
+        )
 
         payload = response.get_json()
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(payload["ok"])
         plan = payload["data"]
-        self.assertEqual(plan["targetSkillId"], "functions_graphs")
-        self.assertEqual(plan["totalHours"], 10)
-        self.assertEqual([week["plannedHours"] for week in plan["weeks"]], [6, 4])
-        self.assertEqual(plan["estimatedCompletionDate"], "2026-08-30")
+        self.assertEqual(plan["planSource"], "graph_engine")
+        self.assertEqual(plan["targetSkillId"], self.locked_node)
+        self.assertEqual(plan["weeklyHours"], 6)
+        self.assertEqual(plan["startDate"], "2026-08-17")
+        self.assertEqual(plan["remainingSkillCount"], len(plan["path"]))
+        self.assertEqual(plan["path"][-1]["skillId"], self.locked_node)
+        # Every planned hour must fit inside a week at the learner's capacity.
+        planned_total = sum(
+            step["hours"]
+            for week in plan["weeks"]
+            for step in week["assignments"]
+        )
+        self.assertEqual(plan["totalHours"], planned_total)
+        self.assertTrue(
+            all(
+                week["plannedHours"] <= plan["weeklyHours"]
+                for week in plan["weeks"]
+            )
+        )
 
     def test_analyzer_returns_teaching_context(self) -> None:
         response = self.client.post(

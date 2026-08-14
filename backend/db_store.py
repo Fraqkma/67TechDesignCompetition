@@ -1,20 +1,23 @@
 """PostgreSQL-backed storage for the Skill Graph.
 
-This module replaces ``data/database.json``.  The connected database described
-in ``database_schema_description.txt`` is the single source of truth for:
+The connected database described in ``database_schema_description.txt`` is the
+single source of truth for:
 
 - ``careers`` / ``nodes`` / ``career_nodes`` / ``node_prerequisites``
   (the skill graph structure)
 - ``users`` / ``user_profiles`` / ``user_node_progress``
   (authentication and learner progress)
 
-Only structured facts live in the database.  Display-only fields that the
-roadmap UI needs (node position, subject grouping, level, difficulty) are
-derived deterministically here so the frontend contract stays unchanged.
+The catalog data (careers, nodes, subjects, prerequisites, achievements,
+ranks) lives in the database.  Only purely presentational fields that the
+roadmap UI needs (node position, level, difficulty, weight, estimated hours,
+short label) are derived deterministically from stored data so the frontend
+contract stays unchanged and the database stays the single source of truth.
 """
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from typing import Any
 
@@ -39,7 +42,21 @@ SCHEMA_STATEMENTS: list[str] = [
         id BIGSERIAL PRIMARY KEY,
         title VARCHAR(150) NOT NULL,
         description TEXT,
-        exp_reward INTEGER NOT NULL DEFAULT 100
+        exp_reward INTEGER NOT NULL DEFAULT 100,
+        subject_id BIGINT,
+        thai_title VARCHAR(150),
+        career_relevance INTEGER NOT NULL DEFAULT 3,
+        techniques TEXT NOT NULL DEFAULT '[]',
+        learning_outcomes TEXT NOT NULL DEFAULT '[]',
+        real_world TEXT NOT NULL DEFAULT '[]'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS subjects (
+        id BIGSERIAL PRIMARY KEY,
+        name VARCHAR(150) NOT NULL,
+        thai_name VARCHAR(150),
+        color VARCHAR(20)
     )
     """,
     """
@@ -88,7 +105,196 @@ SCHEMA_STATEMENTS: list[str] = [
         UNIQUE (user_id, node_id)
     )
     """,
+    # ---- Achievements & Certificates module ----
+    """
+    CREATE TABLE IF NOT EXISTS achievements (
+        id BIGSERIAL PRIMARY KEY,
+        title VARCHAR(100) NOT NULL,
+        description TEXT,
+        icon_url VARCHAR(512),
+        condition TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_achievements (
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        achievement_id BIGINT NOT NULL REFERENCES achievements(id) ON DELETE CASCADE,
+        unlocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, achievement_id)
+    )
+    """,
+    # ---- Social module (achievement conditions read these) ----
+    """
+    CREATE TABLE IF NOT EXISTS friendships (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        friend_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status VARCHAR(20) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, friend_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS study_sessions (
+        id BIGSERIAL PRIMARY KEY,
+        host_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        node_id BIGINT REFERENCES nodes(id) ON DELETE SET NULL,
+        title VARCHAR(150) NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ranks (
+        id BIGSERIAL PRIMARY KEY,
+        code VARCHAR(10) NOT NULL,
+        name VARCHAR(50) NOT NULL,
+        hint VARCHAR(200),
+        min_progress INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    # Migrations for databases created before these columns existed.
+    """
+    ALTER TABLE achievements ADD COLUMN IF NOT EXISTS condition TEXT
+    """,
+    """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS subject_id BIGINT
+    """,
+    """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS thai_title VARCHAR(150)
+    """,
+    """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS career_relevance INTEGER NOT NULL DEFAULT 3
+    """,
+    """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS techniques TEXT NOT NULL DEFAULT '[]'
+    """,
+    """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS learning_outcomes TEXT NOT NULL DEFAULT '[]'
+    """,
+    """
+    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS real_world TEXT NOT NULL DEFAULT '[]'
+    """,
 ]
+
+
+# =========================================================
+# Achievements (catalog seed)
+# =========================================================
+
+# ``condition`` is a JSON rule evaluated against user data so the unlock
+# logic stays machine-readable while the catalog itself lives in the DB.
+# Unlock data sources: completed skill count (user_node_progress), EXP
+# (user_profiles.current_exp), friends (friendships), study rooms
+# (study_sessions).  Social features are not built yet, so those two
+# achievements stay locked until the features exist.
+ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
+    (
+        1,
+        "First Step",
+        "เรียนจบวิชาแรกบน Skill Tree",
+        "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+        '{"type": "completed_skills", "target": 1}',
+    ),
+    (
+        2,
+        "Code Novice",
+        "สะสม EXP ครบ 500 แต้ม",
+        "https://cdn-icons-png.flaticon.com/512/190/190411.png",
+        '{"type": "exp", "target": 500}',
+    ),
+    (
+        3,
+        "Social Butterfly",
+        "มีเพื่อนในระบบครบ 3 คน",
+        "https://cdn-icons-png.flaticon.com/512/1256/1256650.png",
+        '{"type": "friends", "target": 3}',
+    ),
+    (
+        4,
+        "Study Buddy Host",
+        "สร้างห้องติวครั้งแรก",
+        "https://cdn-icons-png.flaticon.com/512/3820/3820107.png",
+        '{"type": "study_sessions", "target": 1}',
+    ),
+]
+
+
+def seed_achievements(conn) -> None:
+    """Insert the achievement catalog (idempotent).
+
+    Existing rows keep their title/description/icon; only an empty
+    ``condition`` is filled in so admin edits are not overwritten.
+    """
+    with conn.cursor() as cur:
+        for achievement_id, title, description, icon_url, condition in ACHIEVEMENT_SEEDS:
+            cur.execute(
+                """
+                INSERT INTO achievements (id, title, description, icon_url, condition)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    condition = COALESCE(achievements.condition, EXCLUDED.condition)
+                """,
+                (achievement_id, title, description, icon_url, condition),
+            )
+
+
+# =========================================================
+# Subjects & ranks (catalog seeds)
+# =========================================================
+
+# The first subject matches what the prototype used to hardcode as "core";
+# every existing node is backfilled onto it so behavior stays unchanged.
+SUBJECT_SEEDS: list[tuple[int, str, str, str]] = [
+    (1, "Core Skills", "ทักษะหลัก", "#73e5c1"),
+]
+
+RANK_SEEDS: list[tuple[int, str, str, str, int]] = [
+    (1, "01", "Starter", "เริ่มเรียน Skill แรกเพื่อพัฒนา Rank", 0),
+    (2, "02", "Core Learner", "มีพื้นฐานและเริ่มเรียนวิชาหลัก", 30),
+    (3, "03", "System Builder", "กำลังเชื่อมฮาร์ดแวร์และซอฟต์แวร์", 60),
+    (4, "04", "Career Ready", "พร้อมต่อยอดสู่โปรเจกต์จริง", 90),
+]
+
+
+def seed_subjects_and_nodes(conn) -> None:
+    """Insert the subject catalog and backfill nodes onto it (idempotent)."""
+    with conn.cursor() as cur:
+        for subject_id, name, thai_name, color in SUBJECT_SEEDS:
+            cur.execute(
+                """
+                INSERT INTO subjects (id, name, thai_name, color)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (subject_id, name, thai_name, color),
+            )
+        # Backfill display fields so every existing node behaves like the
+        # prototype default (subject "core", Thai name = English title).
+        cur.execute(
+            """
+            UPDATE nodes
+            SET subject_id = (
+                SELECT id FROM subjects ORDER BY id LIMIT 1
+            )
+            WHERE subject_id IS NULL
+            """
+        )
+        cur.execute("UPDATE nodes SET thai_title = title WHERE thai_title IS NULL")
+
+
+def seed_ranks(conn) -> None:
+    """Insert the rank catalog (idempotent)."""
+    with conn.cursor() as cur:
+        for rank_id, code, name, hint, min_progress in RANK_SEEDS:
+            cur.execute(
+                """
+                INSERT INTO ranks (id, code, name, hint, min_progress)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (rank_id, code, name, hint, min_progress),
+            )
 
 
 def ensure_schema(conn) -> None:
@@ -96,6 +302,9 @@ def ensure_schema(conn) -> None:
     with conn.cursor() as cur:
         for statement in SCHEMA_STATEMENTS:
             cur.execute(statement)
+    seed_achievements(conn)
+    seed_subjects_and_nodes(conn)
+    seed_ranks(conn)
 
 
 # =========================================================
@@ -160,6 +369,19 @@ def user_career_id(conn, user_id: int) -> int | None:
 # =========================================================
 
 
+def _parse_json_list(value: Any) -> list[str]:
+    """Parse a stored JSON array column into a list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
 def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
     """Build the GraphEngine structure for one career from the database."""
     with conn.cursor() as cur:
@@ -179,6 +401,33 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
             )
 
         cur.execute(
+            "SELECT id, name, thai_name, color FROM subjects ORDER BY id"
+        )
+        subject_rows = cur.fetchall()
+        if subject_rows:
+            subjects = [
+                {
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "thaiName": row[2] or row[1],
+                    "color": row[3] or "#73e5c1",
+                }
+                for row in subject_rows
+            ]
+        else:
+            # No subject rows (fresh database before seeding): fall back to
+            # the same default the prototype used so the graph stays valid.
+            subjects = [
+                {
+                    "id": "core",
+                    "name": "Core Skills",
+                    "thaiName": "ทักษะหลัก",
+                    "color": "#73e5c1",
+                }
+            ]
+        first_subject_id = subjects[0]["id"]
+
+        cur.execute(
             """
             SELECT
                 n.id,
@@ -186,7 +435,13 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
                 n.description,
                 n.exp_reward,
                 cn.step_order,
-                cn.is_mandatory
+                cn.is_mandatory,
+                n.subject_id,
+                n.thai_title,
+                n.career_relevance,
+                n.techniques,
+                n.learning_outcomes,
+                n.real_world
             FROM career_nodes cn
             JOIN nodes n ON n.id = cn.node_id
             WHERE cn.career_id = %s
@@ -224,29 +479,51 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
 
     skills = []
     for row in node_rows:
-        node_id, title, description, exp_reward, _step, is_mandatory = row
+        (
+            node_id,
+            title,
+            description,
+            exp_reward,
+            _step,
+            is_mandatory,
+            subject_id,
+            thai_title,
+            career_relevance,
+            techniques,
+            learning_outcomes,
+            real_world,
+        ) = row
         depth = depths[node_id]
         level = _level_for_depth(depth)
         skills.append(
             {
                 "id": str(node_id),
                 "name": title,
-                "thaiName": title,
+                "thaiName": thai_title or title,
                 "shortName": _short_name(title),
-                "subjectId": "core",
+                "subjectId": (
+                    str(subject_id)
+                    if subject_id is not None
+                    else first_subject_id
+                ),
                 "level": level,
                 "difficulty": min(5, depth + 1),
                 "weight": {"beginner": 1, "intermediate": 2, "advanced": 3}[
                     level
                 ],
                 "required": True if is_mandatory is None else bool(is_mandatory),
-                "careerRelevance": 3,
+                "careerRelevance": (
+                    career_relevance
+                    if career_relevance is not None
+                    else 3
+                ),
                 "estimatedHours": max(1, (exp_reward or 100) // 10),
+                "expReward": exp_reward or 100,
                 "position": positions[node_id],
                 "description": description or "",
-                "techniques": [],
-                "learningOutcomes": [],
-                "realWorld": [],
+                "techniques": _parse_json_list(techniques),
+                "learningOutcomes": _parse_json_list(learning_outcomes),
+                "realWorld": _parse_json_list(real_world),
             }
         )
 
@@ -259,14 +536,7 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
             "description": career_row[2] or "",
             "icon": _initials(career_row[1]),
         },
-        "subjects": [
-            {
-                "id": "core",
-                "name": "Core Skills",
-                "thaiName": "ทักษะหลัก",
-                "color": "#73e5c1",
-            }
-        ],
+        "subjects": subjects,
         "skills": skills,
         "edges": edges,
         "progress": {"completedSkillIds": [], "updatedAt": None},
@@ -274,7 +544,7 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
 
 
 # =========================================================
-# Display-field derivation (not stored in the database)
+# Display-field derivation (computed, not stored in the database)
 # =========================================================
 
 # X coordinates match the roadmap's fixed beginner/intermediate/advanced
@@ -410,3 +680,217 @@ def reset_progress(conn, user_id: int) -> None:
             "DELETE FROM user_node_progress WHERE user_id = %s",
             (user_id,),
         )
+
+
+# =========================================================
+# Achievements (catalog + unlock state from the database)
+# =========================================================
+
+
+def load_achievements(conn) -> list[dict[str, Any]]:
+    """Return every achievement definition from the achievements table."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, title, description, icon_url, condition
+            FROM achievements
+            ORDER BY id
+            """
+        )
+        return [
+            {
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2] or "",
+                "iconUrl": row[3] or "",
+                "condition": row[4],
+            }
+            for row in cur.fetchall()
+        ]
+
+
+def load_unlocked_achievement_ids(conn, user_id: int) -> set[int]:
+    """Return achievement ids the user already unlocked."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT achievement_id FROM user_achievements WHERE user_id = %s",
+            (user_id,),
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
+def save_unlocked_achievements(
+    conn, user_id: int, achievement_ids: list[int]
+) -> None:
+    """Record newly unlocked achievements (never duplicated)."""
+    with conn.cursor() as cur:
+        for achievement_id in achievement_ids:
+            cur.execute(
+                """
+                INSERT INTO user_achievements (user_id, achievement_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (user_id, achievement_id),
+            )
+
+
+def clear_user_achievements(conn, user_id: int) -> None:
+    """Delete every unlocked record for a user (used on progress reset)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM user_achievements WHERE user_id = %s",
+            (user_id,),
+        )
+
+
+def load_user_stats(conn, user_id: int) -> dict[str, int]:
+    """Load the user-global numbers achievement conditions are checked against.
+
+    Friends and study-session features are not built yet, so both counts
+    read 0 from the (documented) tables and those achievements stay locked
+    until the social module lands.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(current_exp, 0) FROM user_profiles WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        exp = row[0] if row else 0
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM friendships
+            WHERE status = 'accepted' AND (user_id = %s OR friend_id = %s)
+            """,
+            (user_id, user_id),
+        )
+        friends = cur.fetchone()[0]
+
+        cur.execute(
+            "SELECT COUNT(*) FROM study_sessions WHERE host_user_id = %s",
+            (user_id,),
+        )
+        study_sessions = cur.fetchone()[0]
+
+    return {"exp": exp, "friends": friends, "studySessions": study_sessions}
+
+
+def evaluate_achievement_condition(
+    condition_raw: str | None,
+    completed_skill_ids: set[str],
+    stats: dict[str, int],
+) -> bool:
+    """Decide whether one JSON condition is currently satisfied."""
+    if not condition_raw:
+        return False
+    try:
+        condition = json.loads(condition_raw)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(condition, dict):
+        return False
+
+    condition_type = condition.get("type")
+    target = condition.get("target", 1)
+    if not isinstance(target, int):
+        return False
+
+    if condition_type == "completed_skills":
+        return len(completed_skill_ids) >= target
+    if condition_type == "exp":
+        return stats["exp"] >= target
+    if condition_type == "friends":
+        return stats["friends"] >= target
+    if condition_type == "study_sessions":
+        return stats["studySessions"] >= target
+    return False
+
+
+def build_achievements_payload(
+    conn,
+    user_id: int,
+    completed_skill_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Evaluate unlock state from the database and persist new unlocks.
+
+    Returns the list consumed by the roadmap frontend.  Callers must commit
+    the connection so newly unlocked records are saved.
+    """
+    achievements = load_achievements(conn)
+    unlocked_ids = load_unlocked_achievement_ids(conn, user_id)
+    stats = load_user_stats(conn, user_id)
+
+    newly_unlocked: list[int] = []
+    payload: list[dict[str, Any]] = []
+    for achievement in achievements:
+        achievement_id = int(achievement["id"])
+        unlocked = achievement_id in unlocked_ids
+        if not unlocked:
+            unlocked = evaluate_achievement_condition(
+                achievement["condition"],
+                completed_skill_ids,
+                stats,
+            )
+            if unlocked:
+                newly_unlocked.append(achievement_id)
+        payload.append(
+            {
+                "id": achievement["id"],
+                "name": achievement["name"],
+                "description": achievement["description"],
+                "iconUrl": achievement["iconUrl"],
+                "unlocked": unlocked,
+            }
+        )
+
+    if newly_unlocked:
+        save_unlocked_achievements(conn, user_id, newly_unlocked)
+
+    return payload
+
+
+# =========================================================
+# EXP (user_profiles gamification)
+# =========================================================
+
+
+def add_exp(conn, user_id: int, amount: int) -> None:
+    """Add (or subtract) EXP on the user's profile."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO user_profiles (user_id, display_name, current_exp)
+            VALUES (%s, '', %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                current_exp = user_profiles.current_exp + EXCLUDED.current_exp,
+                updated_at = NOW()
+            """,
+            (user_id, amount),
+        )
+
+
+# =========================================================
+# Ranks (roadmap avatar, read from the database)
+# =========================================================
+
+
+def load_rank(conn, progress: int) -> dict[str, Any]:
+    """Return the rank object whose threshold the progress percentage passes."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT code, name, hint
+            FROM ranks
+            WHERE min_progress <= %s
+            ORDER BY min_progress DESC
+            LIMIT 1
+            """,
+            (progress,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return {"code": "01", "name": "Starter", "hint": ""}
+        return {"code": row[0], "name": row[1], "hint": row[2] or ""}

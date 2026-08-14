@@ -302,53 +302,6 @@ class GraphEngine:
             },
         }
 
-    def calculate_achievements(
-        self, completed_ids: Iterable[str]
-    ) -> list[dict[str, Any]]:
-        """Calculate four simple prototype achievements."""
-
-        completed = self.clean_completed(completed_ids)
-        beginner_ids = {
-            skill["id"]
-            for skill in self.skills
-            if skill["level"] == "beginner" and skill.get("required", True)
-        }
-        completed_subjects = {
-            self.skill_by_id[skill_id]["subjectId"] for skill_id in completed
-        }
-        progress = self.calculate_progress(completed)
-
-        return [
-            {
-                "id": "first_step",
-                "name": "First Step",
-                "description": "เรียน Skill แรกสำเร็จ",
-                "icon": "✦",
-                "unlocked": len(completed) >= 1,
-            },
-            {
-                "id": "foundation_builder",
-                "name": "Foundation Builder",
-                "description": "เรียน Skill ระดับ Beginner ครบ",
-                "icon": "◆",
-                "unlocked": beginner_ids.issubset(completed),
-            },
-            {
-                "id": "cross_disciplinary",
-                "name": "Cross-Disciplinary",
-                "description": "เรียนอย่างน้อยหนึ่ง Skill จากทุกวิชา",
-                "icon": "⌘",
-                "unlocked": set(self.subject_by_id).issubset(completed_subjects),
-            },
-            {
-                "id": "career_ready",
-                "name": "Career Ready",
-                "description": "เรียน Skill ที่กำหนดครบ 100%",
-                "icon": "★",
-                "unlocked": progress["career"] == 100,
-            },
-        ]
-
     def build_learning_path(
         self, target_id: str, completed_ids: Iterable[str]
     ) -> list[dict[str, Any]]:
@@ -420,7 +373,9 @@ class GraphEngine:
             "progress": self.calculate_progress(completed),
             "recommendation": recommendation,
             "recommendedSkillId": recommended_id,
-            "achievements": self.calculate_achievements(completed),
+            # Achievements are user-global data read from the database
+            # (backend.db_store); the graph engine only computes graph facts.
+            "achievements": [],
             "completedSkillIds": sorted(completed),
             "graph": {
                 "isValidDAG": True,
