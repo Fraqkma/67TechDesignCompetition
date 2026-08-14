@@ -2,165 +2,326 @@
            COMPLETE DATABASE SCHEMA & RELATIONSHIP DOCUMENTATION
 ================================================================================
 
---------------------------------------------------------------------------------
-0. สรุปภาพรวมความสัมพันธ์ของตาราง (ENTITY RELATIONSHIPS OVERVIEW)
---------------------------------------------------------------------------------
-- users (1) <---> (1) user_profiles
-- users (1) <---> (N) friendships (แอดเพื่อนแบบ User ถึง User)
-- users (1) <---> (N) certificates (เจ้าของใบประกาศฯ)
-- users (N) <---> (M) achievements (ผ่านตาราง user_achievements)
-- users (N) <---> (M) nodes (บันทึกก้าวหน้า ผ่านตาราง user_node_progress)
-- careers (1) <---> (N) user_profiles (สายอาชีพที่เลือกเรียน)
-- careers (N) <---> (M) nodes (โครงสร้างวิชาของอาชีพ ผ่านตาราง career_nodes)
-- nodes (N) <---> (M) nodes (วิชาบังคับก่อนหน้า ผ่านตาราง node_prerequisites)
-- study_sessions (1) <---> (N) session_members (สมาชิกในห้องติว)
-- study_sessions (1) <---> (N) chat_messages (ข้อความ/นัดหมายในห้องติว)
-- users (1) <---> (N) study_sessions (เป็น Host สร้างห้อง)
+เอกสารนี้อธิบายโครงสร้างฐานข้อมูล PostgreSQL ทั้งหมดที่ระบบใช้ (อัปเดตล่าสุด
+จาก schema จริงในฐานข้อมูล) ครอบคลุม:
+  - ตารางทั้งหมด 23 ตาราง พร้อมคอลัมน์จริงและความสัมพันธ์ (FK)
+  - สถานะการใช้งานของแต่ละตาราง (โค้ดใช้จริง / ยังไม่ใช้ / legacy)
+  - คำแนะนำสำหรับตารางที่เกินมา
 
 --------------------------------------------------------------------------------
-1. หมวดผู้ใช้งานและโปรไฟล์ (USER & PROFILE MODULE)
+0. สรุปภาพรวม (TABLES OVERVIEW)
+--------------------------------------------------------------------------------
+
+ตารางทั้งหมด 23 ตาราง แบ่งตามสถานะการใช้งานโดยโค้ด (app.py + backend/db_store.py)
+เป็น 3 กลุ่ม:
+
+  A) ตารางที่โค้ดใช้งานจริง (ACTIVE) .......... 13 ตาราง
+  B) ตารางที่ถูกอ่านเพื่อคำนวณ Achievement ..... 2 ตาราง (friendships, study_sessions)
+  C) ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) ....... 8 ตาราง (social module ยังไม่ทำ)
+
+  ตาราง legacy ที่แนะนำให้ลบ/ย้ายข้อมูล ....... 1 ตาราง (user_skill_progress)
+
+หมายเหตุ: db_store.ensure_schema() สร้าง (CREATE TABLE IF NOT EXISTS) เฉพาะ
+ตารางในกลุ่ม A และ B เท่านั้น ตารางกลุ่ม C เกิดจาก branch อื่น/สคริปต์เก่า
+และไม่มีโค้ดใดอ่านหรือเขียน
+
+--------------------------------------------------------------------------------
+1. สถานะการใช้งานตาราง (TABLE STATUS)
+--------------------------------------------------------------------------------
+
+ ตาราง                    | สถานะ      | ใช้โดย                              | จำนวนแถว
+ -------------------------|------------|-------------------------------------|---------
+ users                    | ACTIVE     | auth (app.py), db_store             | 16
+ user_profiles            | ACTIVE     | db_store (EXP/level/career)         | 16
+ user_node_progress       | ACTIVE     | db_store (progress)                 | 30
+ careers                  | ACTIVE     | db_store (list_careers)             | 6
+ nodes                    | ACTIVE     | db_store (load_database)            | 40
+ subjects                 | ACTIVE     | db_store (load_database)            | 1
+ career_nodes             | ACTIVE     | db_store (load_database)            | 53
+ node_prerequisites       | ACTIVE     | db_store (load_database)            | 43
+ achievements             | ACTIVE     | db_store (achievements)             | 4
+ user_achievements        | ACTIVE     | db_store (achievements)             | 5
+ ranks                    | ACTIVE     | db_store (load_rank)                | 4
+ friendships              | ACH-READ   | db_store (load_user_stats)          | 2
+ study_sessions           | ACH-READ   | db_store (load_user_stats)          | 2
+ certificates             | UNUSED     | -                                   | 1
+ session_members          | UNUSED     | -                                   | 2
+ chat_messages            | UNUSED     | -                                   | 3
+ friend_requests          | UNUSED     | -                                   | 0
+ study_groups             | UNUSED     | -                                   | 0
+ study_group_members      | UNUSED     | -                                   | 0
+ study_buddy_friendships  | UNUSED     | -                                   | 0
+ buddy_notifications      | UNUSED     | -                                   | 0
+ study_path_shares        | UNUSED     | -                                   | 0
+ user_skill_progress      | LEGACY     | - (prototype เก่า)                  | 24
+
+--------------------------------------------------------------------------------
+2. ความสัมพันธ์ระหว่างตาราง (ENTITY RELATIONSHIPS OVERVIEW)
+--------------------------------------------------------------------------------
+
+- users (1) <---> (1) user_profiles
+- users (1) <---> (N) user_node_progress (ความก้าวหน้าเรียนแต่ละวิชา)
+- users (N) <---> (M) achievements (ผ่านตาราง user_achievements)
+- users (1) <---> (N) user_skill_progress (LEGACY — ไม่ใช้แล้ว)
+- careers (1) <---> (N) user_profiles (สายอาชีพที่เลือกเรียน)
+- careers (N) <---> (M) nodes (โครงสร้างวิชาของอาชีพ ผ่าน career_nodes)
+- nodes (N) <---> (M) nodes (วิชาบังคับก่อน ผ่าน node_prerequisites)
+- nodes (1) <---> (1) subjects (หมวดวิชา, subject_id)
+
+- users (1) <---> (N) certificates        [UNUSED]
+- users (1) <---> (N) friendships         [อ่านเพื่อนับ achievement]
+- users (1) <---> (N) friend_requests     [UNUSED]
+- users (1) <---> (N) study_sessions      [อ่านเพื่อนับ achievement]
+- study_sessions (1) <---> (N) session_members   [UNUSED]
+- study_sessions (1) <---> (N) chat_messages     [UNUSED]
+- users (1) <---> (N) study_groups        [UNUSED]
+- study_groups (1) <---> (N) study_group_members [UNUSED]
+- users (1) <---> (N) study_buddy_friendships    [UNUSED]
+- users (1) <---> (N) buddy_notifications        [UNUSED]
+- users (1) <---> (N) study_path_shares          [UNUSED]
+
+--------------------------------------------------------------------------------
+3. หมวดผู้ใช้งานและโปรไฟล์ (USER & PROFILE MODULE) — ACTIVE
 --------------------------------------------------------------------------------
 
 [TABLE: users]
-คำอธิบาย: เก็บข้อมูลบัญชีผู้ใช้งานสำหรับใช้ในการเข้าสู่ระบบ (Authentication) และรหัสแอดเพื่อน
-คอลัมน์:
-- id (BIGSERIAL, PK)           : รหัสประจำตัวผู้ใช้งานแบบออโต้รัน
-- uid (VARCHAR(12), UNIQUE)    : รหัส UID สั้นๆ (เช่น MEME-8821) ใช้ค้นหาเพื่อน/เจน QR Code
-- email (VARCHAR(255), UNIQUE) : อีเมลผู้ใช้งาน (ห้ามซ้ำ)
-- password_hash (VARCHAR(255)) : รหัสผ่านที่ผ่านการเข้ารหัสแล้ว (Hash)
-- created_at (TIMESTAMP)       : วันเวลาที่ลงทะเบียนสมัครสมาชิก
+คำอธิบาย: เก็บข้อมูลบัญชีผู้ใช้งานสำหรับเข้าสู่ระบบ (Authentication) และ UID
+สำหรับค้นหาเพื่อน/สแกน QR
+คอลัมน์ (ตามลำดับจริงในฐานข้อมูล):
+- id (BIGSERIAL, PK)           : รหัสประจำตัวผู้ใช้งาน
+- email (VARCHAR, UNIQUE)      : อีเมลผู้ใช้งาน (ห้ามซ้ำ)
+- password_hash (VARCHAR)      : รหัสผ่านที่ผ่านการเข้ารหัสแล้ว (Hash)
+- created_at (TIMESTAMP)       : วันเวลาที่ลงทะเบียน
+- uid (VARCHAR, UNIQUE)        : รหัส UID สั้น ๆ สำหรับค้นหาเพื่อน
+เงื่อนไขพิเศษ: UNIQUE (uid, email)
 
 [TABLE: user_profiles]
-คำอธิบาย: เก็บข้อมูลโปรไฟล์ ระบบ Gamification (Level/EXP) และสายอาชีพที่กำลังเรียนอยู่
+คำอธิบาย: เก็บข้อมูลโปรไฟล์ Gamification (Level/EXP) และสายอาชีพที่กำลังเรียน
 คอลัมน์:
-- user_id (BIGINT, PK, FK)          : รหัสผู้ใช้ (เชื่อมกับ users.id / DELETE CASCADE)
-- display_name (VARCHAR(100))       : ชื่อที่ใช้แสดงผลในระบบ
-- level (INT)                       : เลเวลปัจจุบันของผู้ใช้งาน (ค่าเริ่มต้น: 1)
-- current_exp (INT)                 : ค่าประสบการณ์ (EXP) สะสมปัจจุบัน (ค่าเริ่มต้น: 0)
-- current_career_id (BIGINT, FK)    : สายอาชีพที่เลือกเรียนอยู่ปัจจุบัน (เชื่อมกับ careers.id / SET NULL)
-- updated_at (TIMESTAMP)            : วันเวลาที่มีการอัปเดตข้อมูลโปรไฟล์ล่าสุด
+- user_id (BIGINT, PK, FK)       : รหัสผู้ใช้ (-> users.id / CASCADE)
+- display_name (VARCHAR)         : ชื่อที่ใช้แสดงผลในระบบ
+- level (INTEGER)                : เลเวลปัจจุบัน (ค่าเริ่มต้น: 1)
+- current_exp (INTEGER)          : EXP สะสมปัจจุบัน (ค่าเริ่มต้น: 0)
+- current_career_id (BIGINT, FK) : สายอาชีพที่เลือกเรียน (-> careers.id / SET NULL)
+- updated_at (TIMESTAMP)         : เวลาอัปเดตล่าสุด
+
+[TABLE: user_node_progress]
+คำอธิบาย: บันทึกความก้าวหน้าการเรียนของผู้ใช้แต่ละคนในแต่ละวิชา (กราฟปัจจุบัน)
+คอลัมน์:
+- id (BIGSERIAL, PK)            : รหัสบันทึกรายการ
+- user_id (BIGINT, FK)          : รหัสผู้เรียน (-> users.id / CASCADE)
+- node_id (BIGINT, FK)          : รหัสวิชา (-> nodes.id / CASCADE)
+- status (VARCHAR)              : 'locked' | 'unlocked' | 'completed'
+- completed_at (TIMESTAMP)      : วันเวลาที่เรียนจบวิชานั้น ๆ
+เงื่อนไขพิเศษ: UNIQUE (user_id, node_id) ป้องกันการบันทึกซ้ำ
 
 --------------------------------------------------------------------------------
-2. หมวดแผนผังทักษะและสายอาชีพ (SKILL TREE & CAREER MODULE)
+4. หมวดแผนผังทักษะและสายอาชีพ (SKILL TREE & CAREER MODULE) — ACTIVE
 --------------------------------------------------------------------------------
 
 [TABLE: careers]
-คำอธิบาย: เก็บข้อมูลสายอาชีพทั้งหมดที่มีในระบบ
+คำอธิบาย: เก็บข้อมูลสายอาชีพทั้งหมด (ปัจจุบัน 6 สาย)
 คอลัมน์:
-- id (BIGSERIAL, PK)     : รหัสสายอาชีพ
-- title (VARCHAR(150))   : ชื่อสายอาชีพ (เช่น Software Engineer, Data Scientist)
-- description (TEXT)     : คำอธิบายรายละเอียดของสายอาชีพ
+- id (BIGSERIAL, PK)   : รหัสสายอาชีพ
+- title (VARCHAR)      : ชื่อสายอาชีพ (เช่น Software Engineer / Fullstack)
+- description (TEXT)   : คำอธิบายรายละเอียดของสายอาชีพ
+
+[TABLE: subjects]
+คำอธิบาย: (ตารางใหม่) หมวดหมู่/กลุ่มวิชา ใช้สำหรับแบ่งสีและจัดกลุ่มบน Skill Tree
+คอลัมน์:
+- id (BIGSERIAL, PK)   : รหัสหมวดวิชา
+- name (VARCHAR)       : ชื่อหมวดวิชา (เช่น Core Skills)
+- thai_name (VARCHAR)  : ชื่อภาษาไทย
+- color (VARCHAR)      : สีที่ใช้แสดงผลบนแผนผัง
+หมายเหตุ: ปัจจุบันมีหมวดเดียวคือ "Core Skills" และ node ทุกตัวถูก backfill ให้อยู่หมวดนี้
 
 [TABLE: nodes]
-คำอธิบาย: คลังวิชา/โหนดทักษะส่วนกลาง (Master Data) ไม่ยึดติดกับสายอาชีพใดสายอาชีพหนึ่ง
-คอลัมน์:
-- id (BIGSERIAL, PK)     : รหัสวิชา/โหนด
-- title (VARCHAR(150))   : ชื่อวิชา/โหนดทักษะ (เช่น Python Basics, Git Workflow)
-- description (TEXT)     : รายละเอียดเนื้อหาของวิชา
-- exp_reward (INT)       : ค่า EXP ที่ผู้เรียนจะได้รับเมื่อเรียนจบวิชานี้ (ค่าเริ่มต้น: 100)
+คำอธิบาย: คลังวิชา/โหนดทักษะส่วนกลาง (Master Data) — 40 วิชา
+คอลัมน์ (คอลัมน์หลัง exp_reward เป็นคอลัมน์ที่เพิ่มใหม่จาก prototype เดิม):
+- id (BIGSERIAL, PK)          : รหัสวิชา/โหนด
+- title (VARCHAR)             : ชื่อวิชา (เช่น Git & Version Control Workflow)
+- description (TEXT)          : รายละเอียดเนื้อหาของวิชา
+- exp_reward (INTEGER)        : EXP ที่ได้รับเมื่อเรียนจบ (ค่าเริ่มต้น: 100)
+- subject_id (BIGINT)         : [ใหม่] หมวดวิชา (-> subjects.id)
+- thai_title (VARCHAR)        : [ใหม่] ชื่อวิชาภาษาไทย (ถ้าว่างจะใช้ title)
+- career_relevance (INTEGER)  : [ใหม่] ความเกี่ยวข้องกับอาชีพ (ค่าเริ่มต้น: 3)
+- techniques (TEXT JSON)      : [ใหม่] เทคนิคสำคัญสำหรับเรียนวิชานี้ (array ของ string)
+- learning_outcomes (TEXT JSON): [ใหม่] สิ่งที่ทำได้เมื่อเรียนจบ (array ของ string)
+- real_world (TEXT JSON)      : [ใหม่] ตัวอย่างการนำไปใช้จริง (array ของ string)
+หมายเหตุ: เทคนิค/ผลลัพธ์/การนำไปใช้จริง ถูก backfill แล้วใน data/seed_node_details.py
 
 [TABLE: career_nodes]
-คำอธิบาย: ตารางกลางเชื่อมความสัมพันธ์แบบ Many-to-Many ระหว่าง สายอาชีพ (careers) และ วิชา (nodes)
+คำอธิบาย: ตารางเชื่อม Many-to-Many ระหว่าง สายอาชีพ (careers) และ วิชา (nodes)
 คอลัมน์:
-- career_id (BIGINT, PK, FK)  : รหัสสายอาชีพ (เชื่อมกับ careers.id / DELETE CASCADE)
-- node_id (BIGINT, PK, FK)    : รหัสวิชา (เชื่อมกับ nodes.id / DELETE CASCADE)
-- step_order (INT)            : ลำดับขั้นตอนการแสดงผลบน Skill Tree ของสายอาชีพนั้นๆ
-- is_mandatory (BOOLEAN)      : สถานะวิชาบังคับ (TRUE = วิชาบังคับ, FALSE = วิชาเลือก)
+- career_id (BIGINT, PK, FK)  : รหัสสายอาชีพ (-> careers.id / CASCADE)
+- node_id (BIGINT, PK, FK)    : รหัสวิชา (-> nodes.id / CASCADE)
+- step_order (INTEGER)        : ลำดับการแสดงผลบน Skill Tree (ค่าเริ่มต้น: 1)
+- is_mandatory (BOOLEAN)      : วิชาบังคับหรือวิชาเลือก (ค่าเริ่มต้น: TRUE)
 
 [TABLE: node_prerequisites]
-คำอธิบาย: เก็บเงื่อนไขวิชาบังคับก่อนหน้า (Prerequisites) ของแต่ละโหนด
+คำอธิบาย: เก็บเงื่อนไขวิชาบังคับก่อนหน้า (Prerequisite) ของแต่ละโหนด — เป็น Edge
+ของ Graph Engine (Graph Engine เป็น source of truth ของเส้นทางการเรียน)
 คอลัมน์:
-- node_id (BIGINT, PK, FK)              : รหัสวิชาหลัก (เชื่อมกับ nodes.id / DELETE CASCADE)
-- prerequisite_node_id (BIGINT, PK, FK) : รหัสวิชาที่ต้องเรียนให้ผ่านก่อน (เชื่อมกับ nodes.id / DELETE CASCADE)
-
-[TABLE: user_node_progress]
-คำอธิบาย: บันทึกสถานะความก้าวหน้าการเรียนของผู้ใช้งานแต่ละคนในแต่ละวิชา
-คอลัมน์:
-- id (BIGSERIAL, PK)         : รหัสบันทึกรายการ
-- user_id (BIGINT, FK)       : รหัสผู้เรียน (เชื่อมกับ users.id / DELETE CASCADE)
-- node_id (BIGINT, FK)       : รหัสวิชา (เชื่อมกับ nodes.id / DELETE CASCADE)
-- status (VARCHAR(20))       : สถานะการเรียน ('locked', 'unlocked', 'completed')
-- completed_at (TIMESTAMP)   : วันเวลาที่เรียนจบวิชานั้นๆ
-เงื่อนไขพิเศษ: UNIQUE (user_id, node_id) เพื่อป้องกันการบันทึกวิชาซ้ำของตัวละครเดิม
+- node_id (BIGINT, PK, FK)              : รหัสวิชาหลัก (-> nodes.id / CASCADE)
+- prerequisite_node_id (BIGINT, PK, FK) : วิชาที่ต้องเรียนผ่านก่อน (-> nodes.id / CASCADE)
 
 --------------------------------------------------------------------------------
-3. หมวดตราความสำเร็จและเกียรติบัตร (ACHIEVEMENTS & CERTIFICATES MODULE)
+5. หมวดตราความสำเร็จและระดับ (ACHIEVEMENTS & RANKS MODULE) — ACTIVE
 --------------------------------------------------------------------------------
 
 [TABLE: achievements]
-คำอธิบาย: เก็บข้อมูลรายการตราความสำเร็จ (Badge) ทั้งหมดที่มีในระบบ
+คำอธิบาย: (ตารางใหม่) รายการตราความสำเร็จ (Badge) ทั้งหมด — seed อัตโนมัติ 4 รายการ
 คอลัมน์:
-- id (BIGSERIAL, PK)     : รหัสตราความสำเร็จ
-- title (VARCHAR(100))   : ชื่อตราความสำเร็จ (เช่น First Step, Math Master)
-- description (TEXT)     : เงื่อนไขการได้รับตราความสำเร็จ
-- icon_url (VARCHAR(512)): ลิงก์รูปภาพไอคอนของ Badge
+- id (BIGSERIAL, PK)         : รหัสตรา
+- title (VARCHAR)            : ชื่อตรา (First Step, Code Novice, ...)
+- description (TEXT)         : คำอธิบาย/เงื่อนไข
+- icon_url (VARCHAR)         : ลิงก์รูปไอคอน
+- condition (TEXT)           : [ใหม่] เงื่อนไขปลดล็อกในรูป JSON
+                              เช่น {"type": "exp", "target": 500}
+                              type ที่รองรับ: completed_skills | exp | friends | study_sessions
 
 [TABLE: user_achievements]
-คำอธิบาย: บันทึกรายการตราความสำเร็จที่ผู้ใช้งานแต่ละคนปลดล็อกได้แล้ว
+คำอธิบาย: (ตารางใหม่) บันทึกตราที่ผู้ใช้แต่ละคนปลดล็อกแล้ว
 คอลัมน์:
-- user_id (BIGINT, PK, FK)        : รหัสผู้ใช้ (เชื่อมกับ users.id / DELETE CASCADE)
-- achievement_id (BIGINT, PK, FK) : รหัสตราความสำเร็จ (เชื่อมกับ achievements.id / DELETE CASCADE)
-- unlocked_at (TIMESTAMP)         : วันเวลาที่ปลดล็อกสำเร็จ
+- user_id (BIGINT, PK, FK)        : รหัสผู้ใช้ (-> users.id / CASCADE)
+- achievement_id (BIGINT, PK, FK) : รหัสตรา (-> achievements.id / CASCADE)
+- unlocked_at (TIMESTAMP)         : วันเวลาที่ปลดล็อก
 
-[TABLE: certificates]
-คำอธิบาย: เก็บข้อมูลไฟล์เกียรติบัตรดิจิทัล (E-Certificate) ที่ผู้ใช้อัปโหลดเข้าสู่ระบบ
+[TABLE: ranks]
+คำอธิบาย: (ตารางใหม่) ระดับ Rank ของผู้เรียน — seed อัตโนมัติ 4 ระดับ
 คอลัมน์:
-- id (BIGSERIAL, PK)      : รหัสเกียรติบัตร
-- user_id (BIGINT, FK)    : รหัสเจ้าของเกียรติบัตร (เชื่อมกับ users.id / DELETE CASCADE)
-- title (VARCHAR(255))    : ชื่อเกียรติบัตร/หลักสูตร
-- issued_by (VARCHAR(150)): ชื่อองค์กร/สถาบันผู้ออกใบประกาศฯ (เช่น Coursera, Udemy)
-- file_url (VARCHAR(512)) : ลิงก์ที่อยู่ไฟล์ภาพหรือไฟล์ PDF ที่จัดเก็บใน Cloud Storage
-- uploaded_at (TIMESTAMP) : วันเวลาที่อัปโหลดไฟล์เข้าระบบ
+- id (BIGSERIAL, PK)      : รหัส Rank
+- code (VARCHAR)          : รหัสย่อ (01, 02, 03, 04)
+- name (VARCHAR)          : ชื่อ Rank (Starter, Core Learner, ...)
+- hint (VARCHAR)          : คำแนะนำสั้น ๆ
+- min_progress (INTEGER)  : เปอร์เซ็นต์ความคืบหน้าขั้นต่ำของ Rank นี้
 
 --------------------------------------------------------------------------------
-4. หมวดระบบสังคมและเพื่อนติว (SOCIAL & STUDY BUDDY MODULE)
+6. ตารางที่อ่านเพื่อคำนวณ Achievement (ACHIEVEMENT-READ) — ยังไม่มี UI
 --------------------------------------------------------------------------------
 
 [TABLE: friendships]
-คำอธิบาย: เก็บความสัมพันธ์เพื่อนระหว่างผู้ใช้ (จากการแอดด้วย UID หรือ สแกน QR Code)
+คำอธิบาย: ความสัมพันธ์เพื่อนระหว่างผู้ใช้ (แอดด้วย UID / สแกน QR) — ปัจจุบัน
+โค้ดอ่านเฉพาะจำนวนเพื่อน status='accepted' เพื่อปลดล็อกตรา "Social Butterfly"
 คอลัมน์:
-- id (BIGSERIAL, PK)         : รหัสรายการความสัมพันธ์
-- user_id (BIGINT, FK)       : รหัสผู้ขอแอดเพื่อน (เชื่อมกับ users.id / DELETE CASCADE)
-- friend_id (BIGINT, FK)     : รหัสเพื่อนที่ถูกแอด (เชื่อมกับ users.id / DELETE CASCADE)
-- status (VARCHAR(20))       : สถานะเพื่อน ('pending', 'accepted', 'blocked')
-- created_at (TIMESTAMP)     : วันเวลาที่แอดเพื่อน
-เงื่อนไขพิเศษ: UNIQUE (user_id, friend_id) เพื่อป้องกันการแอดเพื่อนซ้ำ
+- id (BIGSERIAL, PK)       : รหัสรายการความสัมพันธ์
+- user_id (BIGINT, FK)     : ผู้ขอแอดเพื่อน (-> users.id)
+- friend_id (BIGINT, FK)   : เพื่อนที่ถูกแอด (-> users.id)
+- status (VARCHAR)         : 'pending' | 'accepted' | 'blocked'
+- created_at (TIMESTAMP)   : วันเวลาที่แอด
+เงื่อนไขพิเศษ: UNIQUE (user_id, friend_id)
 
 [TABLE: study_sessions]
-คำอธิบาย: เก็บข้อมูลห้องติว (Study Session Rooms) ที่ผู้ใช้สร้างขึ้น
+คำอธิบาย: ห้องติว (Study Session Rooms) — ปัจจุบันโค้ดอ่านเฉพาะจำนวนห้องที่ผู้ใช้
+เป็น Host เพื่อปลดล็อกตรา "Study Buddy Host"
 คอลัมน์:
 - id (BIGSERIAL, PK)         : รหัสห้องติว
-- host_user_id (BIGINT, FK)  : รหัสผู้ใช้ที่เป็นเจ้าของห้อง (เชื่อมกับ users.id / DELETE CASCADE)
-- node_id (BIGINT, FK)       : รหัสวิชาที่กำลังติวอยู่ (เชื่อมกับ nodes.id / SET NULL)
-- title (VARCHAR(150))       : ชื่อห้องติว
-- is_active (BOOLEAN)        : สถานะห้อง (TRUE = เปิดอยู่, FALSE = ปิดแล้ว)
+- host_user_id (BIGINT, FK)  : ผู้เป็นเจ้าของห้อง (-> users.id)
+- node_id (BIGINT, FK)       : วิชาที่กำลังติว (-> nodes.id / SET NULL)
+- title (VARCHAR)            : ชื่อห้องติว
+- is_active (BOOLEAN)        : TRUE = เปิดอยู่, FALSE = ปิดแล้ว
 - created_at (TIMESTAMP)     : วันเวลาที่สร้างห้อง
 
-[TABLE: session_members]
-คำอธิบาย: บันทึกรายชื่อสมาชิกหรือเพื่อนที่ถูกดึงเข้ามาในห้องติว
-คอลัมน์:
-- session_id (BIGINT, PK, FK): รหัสห้องติว (เชื่อมกับ study_sessions.id / DELETE CASCADE)
-- user_id (BIGINT, PK, FK)   : รหัสผู้ใช้ที่เข้าร่วม (เชื่อมกับ users.id / DELETE CASCADE)
-- joined_at (TIMESTAMP)      : วันเวลาที่เข้าร่วมห้องติว
+--------------------------------------------------------------------------------
+7. ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) — มาจาก branch โซเชียล/study buddy
+--------------------------------------------------------------------------------
 
-[TABLE: chat_messages]
-คำอธิบาย: เก็บข้อมูลแช็ตในห้องติว ทั้งข้อความทั่วไป รูป GIF และการ์ดนัดหมาย
-คอลัมน์:
-- id (BIGSERIAL, PK)         : รหัสข้อความ
-- session_id (BIGINT, FK)    : รหัสห้องติว (เชื่อมกับ study_sessions.id / DELETE CASCADE)
-- sender_id (BIGINT, FK)     : รหัสผู้ส่งข้อความ (เชื่อมกับ users.id / DELETE CASCADE)
-- message_type (VARCHAR(20)) : ประเภทข้อความ ('text', 'gif', 'appointment')
-- content (TEXT)             : เนื้อหาข้อความ / ลิงก์รูป GIF / ข้อมูล JSON วันเวลานัดหมาย
-- created_at (TIMESTAMP)     : วันเวลาที่ส่งข้อความ
+ตารางกลุ่มนี้ถูกออกแบบไว้สำหรับฟีเจอร์โซเชียลและ Study Buddy แต่ยังไม่มี
+โค้ด (app.py / db_store.py / templates) อ่านหรือเขียนเลย มีเพียงข้อมูล seed
+ตัวอย่าง ฟีเจอร์ Achievement สองรายการอ่านตาราง friendships / study_sessions
+(หมวด 6) เท่านั้น
+
+[TABLE: certificates] (1 แถว)
+คำอธิบาย: เก็บข้อมูลไฟล์เกียรติบัตรดิจิทัล (E-Certificate) ที่ผู้ใช้อัปโหลด
+คอลัมน์: id, user_id (-> users.id), title, issued_by, file_url, uploaded_at
+
+[TABLE: session_members] (2 แถว)
+คำอธิบาย: สมาชิกที่เข้าร่วมห้องติว
+คอลัมน์: session_id (PK, -> study_sessions.id), user_id (PK, -> users.id), joined_at
+
+[TABLE: chat_messages] (3 แถว)
+คำอธิบาย: แช็ตในห้องติว ทั้งข้อความ รูป GIF และการ์ดนัดหมาย
+คอลัมน์: id, session_id (-> study_sessions.id), sender_id (-> users.id),
+        message_type ('text'|'gif'|'appointment'), content, created_at
+
+[TABLE: friend_requests] (0 แถว)
+คำอธิบาย: คำขอเป็นเพื่อน (แยกออกจาก friendships)
+คอลัมน์: id, requester_user_id (-> users.id), addressee_user_id (-> users.id),
+        status ('pending'), message, created_at, responded_at
+เงื่อนไขพิเศษ: UNIQUE (requester_user_id, addressee_user_id)
+
+[TABLE: study_groups] (0 แถว)
+คำอธิบาย: กลุ่มเรียน/กลุ่มติว
+คอลัมน์: id, name, owner_user_id (-> users.id), career_id (-> careers.id),
+        focus_node_id (-> nodes.id), created_at
+
+[TABLE: study_group_members] (0 แถว)
+คำอธิบาย: สมาชิกกลุ่มเรียน
+คอลัมน์: group_id (PK, -> study_groups.id), user_id (PK, -> users.id),
+        role ('member'), joined_at
+
+[TABLE: study_buddy_friendships] (0 แถว)
+คำอธิบาย: ความสัมพันธ์คู่หูติว (แนวคิดคล้าย friendships แต่แยกเจตนา)
+คอลัมน์: user_id (PK, -> users.id), friend_user_id (PK, -> users.id), created_at
+
+[TABLE: buddy_notifications] (0 แถว)
+คำอธิบาย: การแจ้งเตือนในระบบคู่หูติว
+คอลัมน์: id, user_id (-> users.id), actor_user_id (-> users.id), kind, title,
+        body, payload (JSONB), read_at, created_at
+
+[TABLE: study_path_shares] (0 แถว)
+คำอธิบาย: การแชร์เส้นทางการเรียน (snapshot ของ Skill Tree) ให้เพื่อน
+คอลัมน์: id, sender_user_id (-> users.id), receiver_user_id (-> users.id),
+        career_id (-> careers.id), message, snapshot (JSONB), created_at
 
 --------------------------------------------------------------------------------
-5. ดรรชนีเพื่อเพิ่มประสิทธิภาพการดึงข้อมูล (INDEXES)
+8. ตาราง LEGACY ที่ไม่ได้ใช้งาน (แนะนำให้จัดการ)
 --------------------------------------------------------------------------------
-- idx_career_nodes_career     : เร่งความเร็วการดึงข้อมูลรายวิชาทั้งหมดตามสายอาชีพ (career_id)
-- idx_career_nodes_node       : เร่งความเร็วการค้นหาว่าวิชานี้ (node_id) อยู่ในอาชีพไหนบ้าง
-- idx_user_node_progress_user   : เร่งความเร็วการดึงความก้าวหน้า Skill Tree ทั้งหมดของผู้ใช้ (user_id)
-- idx_certificates_user       : เร่งความเร็วการดึงรายการเกียรติบัตรทั้งหมดของผู้ใช้ (user_id)
-- idx_friendships_user        : เร่งความเร็วการดึงรายชื่อเพื่อนทั้งหมดของผู้ใช้ (user_id)
-- idx_study_sessions_host     : เร่งความเร็วการดึงห้องติวทั้งหมดที่ผู้ใช้คนนี้เป็น Host (host_user_id)
-- idx_chat_messages_session   : เร่งความเร็วการดึงข้อความแช็ตทั้งหมดภายในห้องติว (session_id)
+
+[TABLE: user_skill_progress] (24 แถว)
+คำอธิบาย: ตารางจาก prototype ยุค data/database.json — เก็บความก้าวหน้าโดยใช้
+skill_id เป็น string (เช่น 'programming_fundamentals', 'basic_algebra') ซึ่งไม่
+ตรงกับ nodes.id (BIGINT) ที่ระบบปัจจุบันใช้
+คอลัมน์: user_id (INTEGER, PK, -> users.id), skill_id (TEXT, PK),
+        completed_at (TIMESTAMP)
+เหตุผลที่ไม่ใช้: ระบบปัจจุบันอ่าน/เขียนผ่าน user_node_progress (หมวด 3) เท่านั้น
+ไม่มีโค้ดใดอ้างอิงตารางนี้แล้ว
+
+--------------------------------------------------------------------------------
+9. คำแนะนำ (RECOMMENDATIONS)
+--------------------------------------------------------------------------------
+
+1) user_skill_progress (LEGACY)
+   - แนะนำ: ตรวจสอบว่ายังมีผู้ใช้ที่ยังไม่ได้ย้ายข้อมูลหรือไม่ ถ้าไม่มี ให้ DROP
+     ตารางทิ้ง เพื่อไม่ให้สับสนกับ user_node_progress (ชื่อคล้ายกันมาก)
+   - ถ้าอยากเก็บประวัติ: ย้ายข้อมูลโดย map skill_id (string) -> nodes.id (BIGINT)
+     โดยเทียบชื่อวิชาเก่ากับ nodes.title ให้ตรงกันก่อน แล้วจึงลบตาราง
+
+2) ตารางโซเชียลที่ยังไม่ใช้ (certificates, chat_messages, session_members,
+   friend_requests, study_groups, study_group_members, study_buddy_friendships,
+   buddy_notifications, study_path_shares)
+   - ถ้าแผนงานมีฟีเจอร์โซเชียล/Study Buddy ต่อจากนี้: เก็บไว้เป็น Design Reference
+     แต่ควรเพิ่มลงใน SCHEMA_STATEMENTS ของ db_store.py ด้วย เพื่อให้
+     ensure_schema() สร้างตารางให้ครบในฐานข้อมูลใหม่ (ตอนนี้สร้างไม่ครบ)
+   - ถ้ายกเลิกฟีเจอร์โซเชียล: ลบ 8 ตารางนี้ออก (เก็บ friendships + study_sessions
+     ไว้ เพราะ achievement อ่านอยู่)
+
+3) การเพิ่มตารางใหม่ในอนาคต
+   - ให้เพิ่ม DDL ใน SCHEMA_STATEMENTS (backend/db_store.py) เสมอ เพื่อให้
+     ฐานข้อมูลใหม่ (fresh DB) มี schema ครบเท่ากับฐานข้อมูลจริง
+   - หลีกเลี่ยงการสร้างตารางด้วยสคริปต์ครั้งเดียวที่ไม่ได้ commit ไว้ใน repo
+
+4) ข้อมูลเนื้อหาวิชา (techniques / learning_outcomes / real_world)
+   - backfill เสร็จแล้วสำหรับ 40 nodes ผ่าน data/seed_node_details.py
+   - สคริปต์นี้ idempotent (อัปเดตเฉพาะ node ที่ยังว่าง) ใช้รันซ้ำได้กับฐานข้อมูลใหม่
+
+--------------------------------------------------------------------------------
+10. หมายเหตุการแก้ไขเอกสาร (CHANGELOG)
+--------------------------------------------------------------------------------
+- v2: เพิ่มตารางใหม่ (subjects, achievements, user_achievements, ranks)
+      เพิ่มคอลัมน์ใหม่ใน nodes (subject_id, thai_title, career_relevance,
+      techniques, learning_outcomes, real_world)
+      เพิ่มคอลัมน์ condition ใน achievements
+      เพิ่มสถานะการใช้งานและคำแนะนำสำหรับตารางที่ยังไม่ใช้/legacy
+      อัปเดตคอลัมน์จริงของ users (ลำดับคอลัมน์ + uid)
 ================================================================================

@@ -32,7 +32,6 @@ from backend import (
     AIService,
     GraphEngine,
     GraphValidationError,
-    JsonStore,
     PlanService,
     TeachingAssistant,
     db_store,
@@ -151,11 +150,29 @@ def create_app(database_path: str | None = None) -> Flask:
         """Load one career's graph from PostgreSQL."""
         conn = get_db()
         try:
+            # Ensure tables/columns exist (idempotent) so the graph loader
+            # always sees the current schema, even on a fresh database.
+            db_store.ensure_schema(conn)
             database = db_store.load_database(conn, career_id)
             engine = GraphEngine(database)
             return database, engine, set()
         finally:
             conn.close()
+
+    def attach_user_context(
+        conn,
+        user_id: int,
+        completed: set[str],
+        roadmap_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Add DB-driven user context (achievements + rank) to a roadmap."""
+        roadmap_payload["achievements"] = (
+            db_store.build_achievements_payload(conn, user_id, completed)
+        )
+        roadmap_payload["rank"] = db_store.load_rank(
+            conn, roadmap_payload["progress"]["career"]
+        )
+        return roadmap_payload
 
     def logged_in_user_id() -> int | None:
         """Return the authenticated user id without trusting request data."""
@@ -229,18 +246,37 @@ def create_app(database_path: str | None = None) -> Flask:
                             engine.skill_by_id[item]["name"] for item in missing
                         )
                     )
+                newly_completed = skill_id not in current
                 db_store.save_completed(conn, user_id, int(skill_id), True)
+                # Award the node's EXP reward only the first time it is
+                # completed so the Code Novice achievement can unlock.
+                if newly_completed:
+                    db_store.add_exp(
+                        conn,
+                        user_id,
+                        int(engine.skill_by_id[skill_id].get("expReward", 100)),
+                    )
                 current.add(skill_id)
             else:
                 current, removed_ids = engine.remove_skill_and_invalid_dependents(
                     skill_id, current
                 )
-                node_ids = [int(skill_id)]
-                node_ids.extend(int(item) for item in removed_ids)
-                db_store.delete_completed_many(conn, user_id, node_ids)
+                # removed_ids already includes skill_id itself.
+                node_ids = {int(item) for item in removed_ids}
+                db_store.delete_completed_many(conn, user_id, sorted(node_ids))
+                # Un-completing refunds the EXP of every affected skill so
+                # toggling cannot farm points.
+                exp_to_remove = sum(
+                    int(engine.skill_by_id[item].get("expReward", 100))
+                    for item in removed_ids
+                )
+                if exp_to_remove:
+                    db_store.add_exp(conn, user_id, -exp_to_remove)
+            roadmap_payload = engine.build_roadmap_payload(current)
+            attach_user_context(conn, user_id, current, roadmap_payload)
             conn.commit()
             return {
-                "roadmap": engine.build_roadmap_payload(current),
+                "roadmap": roadmap_payload,
                 "removedSkillIds": removed_ids,
             }
         except Exception:
@@ -723,12 +759,17 @@ def create_app(database_path: str | None = None) -> Flask:
                     preferred_subject,
                 )
 
-            return success(
-                engine.build_roadmap_payload(
-                    completed,
-                    preferred_subject,
-                )
+            roadmap_payload = engine.build_roadmap_payload(
+                completed,
+                preferred_subject,
             )
+            conn = get_db()
+            try:
+                attach_user_context(conn, user_id, completed, roadmap_payload)
+                conn.commit()
+            finally:
+                conn.close()
+            return success(roadmap_payload)
 
         except KeyError as exc:
             return error(
@@ -1005,8 +1046,13 @@ def create_app(database_path: str | None = None) -> Flask:
             conn = get_db()
             db_store.ensure_schema(conn)
             db_store.reset_progress(conn, user_id)
+            # Achievements derive from progress, so clear unlocked records
+            # too and let them re-evaluate from the reset state.
+            db_store.clear_user_achievements(conn, user_id)
+            roadmap_payload = engine.build_roadmap_payload(set())
+            attach_user_context(conn, user_id, set(), roadmap_payload)
             conn.commit()
-            return success(engine.build_roadmap_payload(set()), "Progress reset")
+            return success(roadmap_payload, "Progress reset")
         except KeyError as exc:
             return error(str(exc), 404)
         except psycopg2.Error as exc:
