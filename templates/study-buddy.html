@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Study Buddy — หาเพื่อนร่วมเส้นทาง แชร์ Skill Tree และสร้างกลุ่มติว"
+    />
+    <title>Skill Map | Study Buddy</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/study-buddy.css') }}"
+    />
+  </head>
+  <body class="roadmap-page study-buddy-page">
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <div class="app-shell study-buddy-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Skill Map home">
+          <span class="brand-mark">SM</span>
+          <span>
+            <strong>Skill Map</strong>
+            <small>Study Buddy &amp; Friends</small>
+          </span>
+        </a>
+        <nav class="topbar-actions" aria-label="เมนูหลัก">
+          <a class="button ghost" href="/roadmap">Roadmap</a>
+          <a class="button ghost" href="/profile">Profile</a>
+        </nav>
+      </header>
+
+      <main>
+      <section class="hero">
+        <div>
+          <span class="eyebrow">STUDY BUDDY &amp; FRIENDS</span>
+          <h1>เพื่อนร่วมเรียนและกลุ่มติว</h1>
+          <p>
+            แชร์เส้นทางและความถนัด หาเพื่อนที่เรียน Skill ใกล้กัน และสร้างกลุ่มติว
+            โดยใช้ข้อมูลจริงจาก Skill Tree
+          </p>
+        </div>
+        <article class="identity-card" aria-label="โปรไฟล์ Study Buddy">
+          <span class="online-dot"></span>
+          <div class="avatar" id="my-avatar">?</div>
+          <div>
+            <small>YOUR BUDDY ID</small>
+            <strong id="my-name">กำลังโหลด...</strong>
+            <button class="uid-button" id="copy-uid" type="button">
+              <span id="my-uid">—</span>
+              <span aria-hidden="true">⧉</span>
+            </button>
+          </div>
+        </article>
+      </section>
+
+      <div class="feedback hidden" id="feedback" role="status"></div>
+
+      <section class="stat-row" aria-label="ภาพรวม Study Buddy">
+        <article><strong id="friend-count">0</strong><span>เพื่อนที่เพิ่มแล้ว</span></article>
+        <article><strong id="match-count">0</strong><span>คู่เรียนที่แนะนำ</span></article>
+        <article><strong id="group-count">0</strong><span>กลุ่มติวของฉัน</span></article>
+        <article><strong id="unread-count">0</strong><span>แจ้งเตือนใหม่</span></article>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="primary-column">
+          <article class="panel share-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">NOW STUDYING</span>
+                <h2>บอกเพื่อนว่ากำลังเรียนอะไร</h2>
+              </div>
+              <span class="graph-badge">ตรวจสอบด้วย Graph</span>
+            </div>
+            <p class="muted">
+              เลือกได้เฉพาะ Skill ที่ Graph Engine ระบุว่าพร้อมเรียนหรือเรียนแล้ว
+            </p>
+            <div class="inline-form">
+              <label class="sr-only" for="activity-skill">Skill ที่กำลังเรียน</label>
+              <select id="activity-skill"></select>
+              <button class="button primary" id="share-activity" type="button">
+                แชร์ให้เพื่อน
+              </button>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">BUDDY MATCHES</span>
+                <h2>เพื่อนที่เหมาะกับเส้นทางของคุณ</h2>
+              </div>
+              <span class="career-pill" id="career-name">เส้นทางปัจจุบัน</span>
+            </div>
+            <div class="card-list" id="match-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">STUDY GROUPS</span>
+                <h2>สร้างกลุ่มติว</h2>
+              </div>
+            </div>
+            <form id="group-form" class="group-form">
+              <label>
+                ชื่อกลุ่ม
+                <input
+                  id="group-name"
+                  type="text"
+                  minlength="3"
+                  maxlength="100"
+                  placeholder="เช่น Python หลังเลิกเรียน"
+                  required
+                />
+              </label>
+              <label>
+                Skill ที่จะติว
+                <select id="group-skill" required></select>
+              </label>
+              <fieldset>
+                <legend>ชวนเพื่อนเข้ากลุ่ม</legend>
+                <div class="friend-checks" id="group-friends"></div>
+              </fieldset>
+              <button class="button primary" type="submit">สร้างกลุ่มติว</button>
+            </form>
+            <div class="group-list" id="group-list"></div>
+            <section class="joinable-groups" aria-labelledby="joinable-groups-title">
+              <div class="subsection-heading">
+                <div>
+                  <span class="eyebrow">FRIENDS' GROUPS</span>
+                  <h3 id="joinable-groups-title">กลุ่มที่เข้าร่วมได้</h3>
+                </div>
+              </div>
+              <div class="group-list" id="joinable-group-list"></div>
+            </section>
+          </article>
+        </div>
+
+        <aside class="secondary-column">
+          <article class="panel notification-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">RECENT ACTIVITY</span>
+                <h2>ความเคลื่อนไหวของเพื่อน</h2>
+              </div>
+            </div>
+            <div class="notification-list" id="notification-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">SHARED PATHS</span>
+                <h2>เส้นทางจากเพื่อน</h2>
+              </div>
+            </div>
+            <div class="share-list" id="path-share-list"></div>
+          </article>
+        </aside>
+      </section>
+
+      <section class="friends-section panel" id="friends">
+        <div class="panel-heading friends-heading">
+          <div>
+            <span class="eyebrow">FRIEND MANAGEMENT</span>
+            <h2>เพื่อนและคำขอเป็นเพื่อน</h2>
+          </div>
+          <form class="search-form" id="people-search">
+            <label class="sr-only" for="search-query">ค้นหาด้วย Buddy ID หรือชื่อ</label>
+            <input
+              id="search-query"
+              type="search"
+              minlength="2"
+              placeholder="ค้นหา Buddy ID หรือชื่อ..."
+              required
+            />
+            <button class="button secondary" type="submit">ค้นหา</button>
+          </form>
+        </div>
+
+        <div class="request-strip" id="request-list"></div>
+        <div class="search-results hidden" id="search-results"></div>
+        <div class="friend-grid" id="friend-list"></div>
+      </section>
+      </main>
+    </div>
+
+    <div class="loading" id="loading" aria-live="polite">
+      <span></span>
+      <p>กำลังเชื่อมต่อเพื่อนร่วมทาง...</p>
+    </div>
+
+    <dialog class="group-chat-dialog" id="group-chat-dialog">
+      <div class="group-chat-shell">
+        <header class="group-chat-header">
+          <div>
+            <span class="eyebrow">GROUP CHAT</span>
+            <h2 id="group-chat-title">กลุ่มติว</h2>
+            <p id="group-chat-meta"></p>
+          </div>
+          <button
+            class="dialog-close"
+            id="group-chat-close"
+            type="button"
+            aria-label="ปิดแชตกลุ่ม"
+          >×</button>
+        </header>
+
+        <div
+          class="group-chat-messages"
+          id="group-chat-messages"
+          aria-live="polite"
+          aria-label="ข้อความในกลุ่ม"
+        ></div>
+
+        <form class="group-chat-form" id="group-chat-form">
+          <label class="sr-only" for="group-chat-input">ข้อความ</label>
+          <textarea
+            id="group-chat-input"
+            rows="2"
+            maxlength="1000"
+            placeholder="ส่งข้อความถึงเพื่อนในกลุ่ม..."
+            required
+          ></textarea>
+          <button class="button primary" id="group-chat-send" type="submit">
+            ส่ง
+          </button>
+        </form>
+
+        <footer class="group-chat-footer">
+          <span id="group-chat-status" role="status"></span>
+          <button class="leave-group-button" id="leave-group" type="button">
+            ออกจากกลุ่ม
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <script src="{{ url_for('static', filename='js/study-buddy.js') }}"></script>
+  </body>
+</html>

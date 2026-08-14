@@ -36,6 +36,7 @@ from backend import (
     TeachingAssistant,
     db_store,
 )
+from backend.study_buddy_routes import create_study_buddy_blueprint
 
 
 # =========================================================
@@ -1480,6 +1481,10 @@ def create_app(database_path: str | None = None) -> Flask:
     # =====================================================
     # Return App
     # =====================================================
+
+    app.register_blueprint(
+        create_study_buddy_blueprint(get_db)
+    )
 
     return app
 
