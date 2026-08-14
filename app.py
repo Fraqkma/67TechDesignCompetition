@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from flask import Flask, jsonify, render_template, request
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - fallback for minimal environments
+    def load_dotenv(*_args, **_kwargs):
+        return False
 import bcrypt
 import psycopg2
 from dotenv import load_dotenv
