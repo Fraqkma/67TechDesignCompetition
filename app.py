@@ -1,14 +1,27 @@
-"""Flask entry point and API routes for the SkillGraph prototype."""
+"""Flask entry point and API routes for the SkillGraph prototype.
+
+The skill graph and learner progress live in the connected PostgreSQL database
+(see ``database_schema_description.txt``).  ``backend.db_store`` maps the
+relational rows into the structure :class:`GraphEngine` expects, so the graph
+engine stays the single source of truth for prerequisites.
+"""
 
 from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from flask import Flask, jsonify, render_template, request
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - fallback for minimal environments
+    def load_dotenv(*_args, **_kwargs):
+        return False
 import bcrypt
 import psycopg2
 from dotenv import load_dotenv
@@ -19,113 +32,77 @@ from backend import (
     AIService,
     GraphEngine,
     GraphValidationError,
-    JsonStore,
+    PlanService,
     TeachingAssistant,
+    db_store,
 )
 from backend.study_buddy_routes import create_study_buddy_blueprint
 
-
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "database.json"
 
 # =========================================================
 # Environment
 # =========================================================
 
-load_dotenv(BASE_DIR / ".env")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
 # =========================================================
 # PostgreSQL Configuration
 # =========================================================
 
+# Strictly follow .env — never fall back to hardcoded values, otherwise a
+# missing key silently connects to the wrong database and the page hangs on
+# the loading screen. SERVER_IP / POSTGRES_* are the primary keys used by
+# this project; DB_HOST / DB_* are kept as legacy aliases.
 DB_CONFIG = {
-    "host": os.getenv("SERVER_IP") or os.getenv("DB_HOST", "localhost"),
-    "port": os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT", "5432"),
-    "database": os.getenv("POSTGRES_DB_NAME") or os.getenv("DB_NAME", "skilltree_db"),
-    "user": os.getenv("POSTGRES_USER") or os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD", ""),
+    "host": os.getenv("SERVER_IP") or os.getenv("DB_HOST"),
+    "port": os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT"),
+    "database": os.getenv("POSTGRES_DB_NAME") or os.getenv("DB_NAME"),
+    "user": os.getenv("POSTGRES_USER") or os.getenv("DB_USER"),
+    "password": os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD"),
 }
+
+_missing_db_keys = [
+    key for key, value in DB_CONFIG.items() if value is None
+]
+if _missing_db_keys:
+    raise RuntimeError(
+        "Database is not configured. Add these keys to .env: "
+        + ", ".join(_missing_db_keys)
+    )
 
 
 def get_db():
-    """Create a PostgreSQL connection."""
-    return psycopg2.connect(**DB_CONFIG)
+    """Create a PostgreSQL connection.
 
-
-def ensure_user_tables(conn) -> None:
-    """Create the small per-user tables needed by authentication and progress.
-
-    The skill graph deliberately remains in ``data/database.json``.  Only a
-    learner's completion state belongs in PostgreSQL, keyed by ``user_id``.
+    ``connect_timeout`` keeps an unreachable host (for example a database on
+    another network, which is the usual cause of the page hanging on the
+    loading screen) from blocking requests for minutes: the connection now
+    fails after a few seconds and returns a readable error.
     """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                uid TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_profiles (
-                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                display_name TEXT,
-                level INTEGER NOT NULL DEFAULT 1,
-                current_exp INTEGER NOT NULL DEFAULT 0,
-                current_career_id TEXT,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_skill_progress (
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                skill_id TEXT NOT NULL,
-                completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (user_id, skill_id)
-            )
-            """
-        )
+    return psycopg2.connect(connect_timeout=5, **DB_CONFIG)
 
 
 # =========================================================
 # Create Flask App
 # =========================================================
 
-def create_app(database_path: str | Path | None = None) -> Flask:
-    """Create the Flask application."""
+def create_app(database_path: str | None = None) -> Flask:
+    """Create the Flask application.
+
+    ``database_path`` is accepted for backwards compatibility with the JSON
+    prototype but is no longer used: the graph is loaded from PostgreSQL.
+    """
 
     app = Flask(__name__)
 
     app.config["JSON_SORT_KEYS"] = False
 
-    app.config["DATABASE_PATH"] = str(
-        database_path or DEFAULT_DATABASE_PATH
-    )
-
     # Flask session
     app.secret_key = os.getenv(
         "FLASK_SECRET_KEY",
         "dev-secret-change-this",
-    )
-
-    store = JsonStore(app.config["DATABASE_PATH"])
-
-    # Study Buddy is registered in the main factory so the original launcher,
-    # tests, and every app instance expose the same social feature set.
-    app.register_blueprint(
-        create_study_buddy_blueprint(
-            get_db,
-            app.config["DATABASE_PATH"],
-            ensure_user_tables,
-        )
     )
 
     # =====================================================
@@ -165,74 +142,165 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         return jsonify(payload), status
 
     # =====================================================
-    # Graph / JSON Store Helpers
+    # Graph / DB Helpers
     # =====================================================
 
-    def load_engine() -> tuple[
-        dict[str, Any],
-        GraphEngine,
-        set[str],
-    ]:
-        database = store.read()
+    def load_engine(
+        career_id: int | None = None,
+    ) -> tuple[dict[str, Any], GraphEngine, set[str]]:
+        """Load one career's graph from PostgreSQL."""
+        conn = get_db()
+        try:
+            # Ensure tables/columns exist (idempotent) so the graph loader
+            # always sees the current schema, even on a fresh database.
+            db_store.ensure_schema(conn)
+            database = db_store.load_database(conn, career_id)
+            engine = GraphEngine(database)
+            return database, engine, set()
+        finally:
+            conn.close()
 
-        engine = GraphEngine(database)
-
-        completed = engine.clean_completed(
-            database.get("progress", {})
-            .get("completedSkillIds", [])
+    def attach_user_context(
+        conn,
+        user_id: int,
+        completed: set[str],
+        roadmap_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Add DB-driven user context (achievements + rank) to a roadmap."""
+        roadmap_payload["achievements"] = (
+            db_store.build_achievements_payload(conn, user_id, completed)
         )
-
-        return database, engine, completed
+        roadmap_payload["rank"] = db_store.load_rank(
+            conn, roadmap_payload["progress"]["career"]
+        )
+        return roadmap_payload
 
     def logged_in_user_id() -> int | None:
         """Return the authenticated user id without trusting request data."""
         user_id = session.get("user_id")
         return user_id if isinstance(user_id, int) else None
 
-    def load_completed_for_user(user_id: int, engine: GraphEngine) -> set[str]:
-        """Read one learner's completed skills from PostgreSQL."""
+    def resolve_career_id(
+        career_param: str | None,
+        user_id: int | None,
+    ) -> int:
+        """Resolve which career's graph a route should load.
+
+        Prefer an explicit ``?career=`` id, then the user's saved career,
+        then the first career in the database.
+        """
         conn = get_db()
         try:
-            ensure_user_tables(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT skill_id FROM user_skill_progress WHERE user_id = %s",
-                    (user_id,),
-                )
-                completed = {row[0] for row in cur.fetchall()}
+            if career_param is not None:
+                try:
+                    career_id = int(career_param)
+                except (TypeError, ValueError):
+                    raise KeyError(f"Unknown career: {career_param}")
+                if not db_store.career_exists(conn, career_id):
+                    raise KeyError(f"Career not found: {career_param}")
+                return career_id
+            career_id = (
+                db_store.user_career_id(conn, user_id)
+                if user_id is not None
+                else None
+            )
+            if career_id is None:
+                career_id = db_store.first_career_id(conn)
+            if career_id is None:
+                raise GraphValidationError("No careers are configured")
+            return career_id
+        finally:
+            conn.close()
+
+    def load_completed_for_user(user_id: int, engine: GraphEngine) -> set[str]:
+        """Read one learner's completed nodes from PostgreSQL."""
+        conn = get_db()
+        try:
+            completed = db_store.load_completed_node_ids(conn, user_id)
             conn.commit()
             return engine.clean_completed(completed)
         finally:
             conn.close()
 
-    def save_progress_for_user(user_id: int, skill_id: str, completed_value: bool):
+    def save_progress_for_user(
+        user_id: int,
+        skill_id: str,
+        completed_value: bool,
+        career_id: int | None = None,
+    ):
         """Validate a graph transition, then persist only that user's state."""
-        _, engine, _ = load_engine()
+        _, engine, _ = load_engine(career_id)
         if skill_id not in engine.skill_by_id:
             raise KeyError(skill_id)
         conn = get_db()
         try:
-            ensure_user_tables(conn)
-            with conn.cursor() as cur:
-                cur.execute("SELECT skill_id FROM user_skill_progress WHERE user_id = %s", (user_id,))
-                current = engine.clean_completed({row[0] for row in cur.fetchall()})
-                removed_ids: list[str] = []
-                if completed_value:
-                    if engine.calculate_statuses(current)[skill_id] == "locked":
-                        missing = engine.missing_prerequisites(skill_id, current)
-                        raise PermissionError("Complete prerequisite skills first: " + ", ".join(engine.skill_by_id[item]["name"] for item in missing))
-                    cur.execute("INSERT INTO user_skill_progress (user_id, skill_id) VALUES (%s, %s) ON CONFLICT (user_id, skill_id) DO NOTHING", (user_id, skill_id))
-                    current.add(skill_id)
-                else:
-                    current, removed_ids = engine.remove_skill_and_invalid_dependents(skill_id, current)
-                    cur.execute("DELETE FROM user_skill_progress WHERE user_id = %s AND skill_id = ANY(%s)", (user_id, [skill_id, *removed_ids]))
+            current = engine.clean_completed(
+                db_store.load_completed_node_ids(conn, user_id)
+            )
+            removed_ids: list[str] = []
+            if completed_value:
+                if engine.calculate_statuses(current)[skill_id] == "locked":
+                    missing = engine.missing_prerequisites(skill_id, current)
+                    raise PermissionError(
+                        "Complete prerequisite skills first: "
+                        + ", ".join(
+                            engine.skill_by_id[item]["name"] for item in missing
+                        )
+                    )
+                newly_completed = skill_id not in current
+                db_store.save_completed(conn, user_id, int(skill_id), True)
+                # Award the node's EXP reward only the first time it is
+                # completed so the Code Novice achievement can unlock.
+                if newly_completed:
+                    db_store.add_exp(
+                        conn,
+                        user_id,
+                        int(engine.skill_by_id[skill_id].get("expReward", 100)),
+                    )
+                current.add(skill_id)
+            else:
+                current, removed_ids = engine.remove_skill_and_invalid_dependents(
+                    skill_id, current
+                )
+                # removed_ids already includes skill_id itself.
+                node_ids = {int(item) for item in removed_ids}
+                db_store.delete_completed_many(conn, user_id, sorted(node_ids))
+                # Un-completing refunds the EXP of every affected skill so
+                # toggling cannot farm points.
+                exp_to_remove = sum(
+                    int(engine.skill_by_id[item].get("expReward", 100))
+                    for item in removed_ids
+                )
+                if exp_to_remove:
+                    db_store.add_exp(conn, user_id, -exp_to_remove)
+            roadmap_payload = engine.build_roadmap_payload(current)
+            attach_user_context(conn, user_id, current, roadmap_payload)
             conn.commit()
-            return {"roadmap": engine.build_roadmap_payload(current), "removedSkillIds": removed_ids}
+            return {
+                "roadmap": roadmap_payload,
+                "removedSkillIds": removed_ids,
+            }
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
+
+    def validate_career_param(career_param: str | None) -> int | None:
+        """Return a validated career id from the query string, if present."""
+        if career_param is None:
+            return None
+        try:
+            career_id = int(career_param)
+        except (TypeError, ValueError):
+            raise KeyError(f"Unknown career: {career_param}")
+        conn = get_db()
+        try:
+            if not db_store.career_exists(conn, career_id):
+                raise KeyError(f"Career not found: {career_param}")
+        finally:
+            conn.close()
+        return career_id
 
     # =====================================================
     # Frontend Pages
@@ -303,7 +371,7 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         conn = None
         try:
             conn = get_db()
-            ensure_user_tables(conn)
+            db_store.ensure_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -311,7 +379,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                     VALUES (%s, %s, %s)
                     RETURNING id, uid, email
                     """,
-                    # Existing database schema stores a compact 12-character UID.
                     (uuid4().hex[:12], normalized_email, password_hash),
                 )
                 user_id, uid, user_email = cur.fetchone()
@@ -545,17 +612,26 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 80
         ):
             return error("displayName must be 1 to 80 characters")
-        if current_career_id is not None and (
-            not isinstance(current_career_id, str) or len(current_career_id) > 100
-        ):
-            return error("currentCareerId must be a string up to 100 characters")
+
+        if current_career_id is not None:
+            if isinstance(current_career_id, str) and current_career_id.isdigit():
+                current_career_id = int(current_career_id)
+            if not isinstance(current_career_id, int) or current_career_id <= 0:
+                return error("currentCareerId must be a valid career id")
+            conn = get_db()
+            try:
+                if not db_store.career_exists(conn, current_career_id):
+                    return error("Career not found", 404, current_career_id)
+            finally:
+                conn.close()
+
         if display_name is None and current_career_id is None:
             return error("Provide displayName or currentCareerId")
 
         conn = None
         try:
             conn = get_db()
-            ensure_user_tables(conn)
+            db_store.ensure_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -567,7 +643,11 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                         updated_at = NOW()
                     RETURNING display_name, current_career_id
                     """,
-                    (user_id, display_name.strip() if isinstance(display_name, str) else None, current_career_id),
+                    (
+                        user_id,
+                        display_name.strip() if isinstance(display_name, str) else None,
+                        current_career_id,
+                    ),
                 )
                 name, career_id = cur.fetchone()
             conn.commit()
@@ -593,6 +673,25 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         return success(
             message="Logout สำเร็จ"
         )
+
+    # =====================================================
+    # Careers (select-track page)
+    # =====================================================
+
+    @app.get("/api/careers")
+    def careers():
+        """Return every career tracked in the database."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            return success(db_store.list_careers(conn), "Careers loaded")
+        except psycopg2.Error as exc:
+            return error("Database connection failed", 500, str(exc))
+        finally:
+            conn.close()
 
     # =====================================================
     # Health
@@ -642,7 +741,8 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         )
 
         try:
-            _, engine, _ = load_engine()
+            career_id = resolve_career_id(request.args.get("career"), user_id)
+            _, engine, _ = load_engine(career_id)
             completed = load_completed_for_user(user_id, engine)
 
             valid_subjects = {
@@ -660,15 +760,30 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                     preferred_subject,
                 )
 
-            return success(
-                engine.build_roadmap_payload(
-                    completed,
-                    preferred_subject,
-                )
+            roadmap_payload = engine.build_roadmap_payload(
+                completed,
+                preferred_subject,
             )
+            conn = get_db()
+            try:
+                attach_user_context(conn, user_id, completed, roadmap_payload)
+                conn.commit()
+            finally:
+                conn.close()
+            return success(roadmap_payload)
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
+        except psycopg2.Error as exc:
+            return error(
+                "Database connection failed",
+                500,
+                str(exc),
+            )
         except (
-            KeyError,
             GraphValidationError,
             ValueError,
         ) as exc:
@@ -691,7 +806,8 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("Login is required", 401)
 
         try:
-            _, engine, _ = load_engine()
+            career_id = resolve_career_id(request.args.get("career"), user_id)
+            _, engine, _ = load_engine(career_id)
             completed = load_completed_for_user(user_id, engine)
 
             roadmap_data = engine.build_roadmap_payload(
@@ -716,8 +832,18 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
             return success(skill)
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
+        except psycopg2.Error as exc:
+            return error(
+                "Database connection failed",
+                500,
+                str(exc),
+            )
         except (
-            KeyError,
             GraphValidationError,
             ValueError,
         ) as exc:
@@ -740,7 +866,8 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("Login is required", 401)
 
         try:
-            _, engine, _ = load_engine()
+            career_id = resolve_career_id(request.args.get("career"), user_id)
+            _, engine, _ = load_engine(career_id)
             completed = load_completed_for_user(user_id, engine)
 
             if skill_id not in engine.skill_by_id:
@@ -766,8 +893,18 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                 }
             )
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
+        except psycopg2.Error as exc:
+            return error(
+                "Database connection failed",
+                500,
+                str(exc),
+            )
         except (
-            KeyError,
             GraphValidationError,
             ValueError,
         ) as exc:
@@ -776,6 +913,60 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                 500,
                 str(exc),
             )
+
+    # =====================================================
+    # Goal-to-Plan
+    # =====================================================
+
+    @app.post("/api/plan/preview")
+    def plan_preview():
+        """Schedule a graph-defined path using the learner's weekly capacity."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("Request body must be JSON")
+
+        target_skill_id = body.get("targetSkillId")
+        weekly_hours = body.get("weeklyHours")
+        start_date_value = body.get("startDate")
+        if not isinstance(target_skill_id, str) or not target_skill_id:
+            return error("targetSkillId must be a non-empty string")
+        if isinstance(weekly_hours, bool) or not isinstance(weekly_hours, int):
+            return error("weeklyHours must be an integer")
+        if start_date_value is None:
+            plan_start_date = date.today()
+        elif isinstance(start_date_value, str):
+            try:
+                plan_start_date = date.fromisoformat(start_date_value)
+            except ValueError:
+                return error("startDate must use YYYY-MM-DD")
+        else:
+            return error("startDate must use YYYY-MM-DD")
+
+        try:
+            _, engine, _ = load_engine()
+            completed = load_completed_for_user(user_id, engine)
+            return success(
+                PlanService.build_preview(
+                    engine,
+                    completed,
+                    target_skill_id,
+                    weekly_hours,
+                    plan_start_date,
+                ),
+                "Learning plan generated",
+            )
+        except KeyError:
+            return error("Skill not found", 404, target_skill_id)
+        except ValueError as exc:
+            return error(str(exc))
+        except psycopg2.Error as exc:
+            return error("Database connection failed", 500, str(exc))
+        except GraphValidationError as exc:
+            return error("Could not build learning plan", 500, str(exc))
 
     # =====================================================
     # Progress
@@ -794,6 +985,7 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
         skill_id = body.get("skillId")
         completed_value = body.get("completed")
+        career_param = body.get("careerId")
 
         if not isinstance(skill_id, str) or not skill_id:
             return error(
@@ -810,132 +1002,27 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("Login is required", 401)
 
         try:
-            result = save_progress_for_user(user_id, skill_id, completed_value)
+            career_id = (
+                validate_career_param(str(career_param))
+                if career_param is not None
+                else None
+            )
+            result = save_progress_for_user(
+                user_id,
+                skill_id,
+                completed_value,
+                career_id=career_id,
+            )
             message = "Skill progress updated" if completed_value else "Skill progress removed"
             return success(result, message)
-        except KeyError:
-            return error("Skill not found", 404, skill_id)
+        except KeyError as exc:
+            return error(str(exc), 404)
         except PermissionError as exc:
             return error(str(exc), 409)
         except psycopg2.Error as exc:
             return error("Database connection failed", 500, str(exc))
         except (GraphValidationError, ValueError) as exc:
             return error("Could not update progress", 500, str(exc))
-
-        try:
-
-            def mutate(database: dict[str, Any]):
-                engine = GraphEngine(database)
-
-                if skill_id not in engine.skill_by_id:
-                    raise KeyError(skill_id)
-
-                current = engine.clean_completed(
-                    database.get("progress", {})
-                    .get("completedSkillIds", [])
-                )
-
-                removed_ids: list[str] = []
-
-                if completed_value:
-
-                    status = engine.calculate_statuses(
-                        current
-                    )[skill_id]
-
-                    if status == "locked":
-
-                        missing = (
-                            engine.missing_prerequisites(
-                                skill_id,
-                                current,
-                            )
-                        )
-
-                        missing_names = [
-                            engine.skill_by_id[item]["name"]
-                            for item in missing
-                        ]
-
-                        raise PermissionError(
-                            "ต้องเรียนพื้นฐานให้ครบก่อน: "
-                            + ", ".join(missing_names)
-                        )
-
-                    current.add(skill_id)
-
-                else:
-
-                    (
-                        current,
-                        removed_ids,
-                    ) = (
-                        engine
-                        .remove_skill_and_invalid_dependents(
-                            skill_id,
-                            current,
-                        )
-                    )
-
-                database.setdefault(
-                    "progress",
-                    {},
-                )["completedSkillIds"] = sorted(
-                    current
-                )
-
-                database["progress"]["updatedAt"] = (
-                    datetime.now(
-                        timezone.utc
-                    ).isoformat()
-                )
-
-                roadmap_data = (
-                    engine.build_roadmap_payload(
-                        current
-                    )
-                )
-
-                return {
-                    "roadmap": roadmap_data,
-                    "removedSkillIds": removed_ids,
-                }
-
-            result = store.update(mutate)
-
-            message = (
-                "บันทึกว่าเรียน Skill นี้แล้ว"
-                if completed_value
-                else "ยกเลิก Skill และ Skill ที่พึ่งพากันแล้ว"
-            )
-
-            return success(
-                result,
-                message,
-            )
-
-        except KeyError:
-            return error(
-                "Skill not found",
-                404,
-                skill_id,
-            )
-
-        except PermissionError as exc:
-            return error(
-                str(exc),
-                409,
-            )
-
-        except (
-            GraphValidationError,
-            ValueError,
-        ) as exc:
-            return error(
-                "Could not update progress",
-                500,
-                str(exc),
-            )
 
     # =====================================================
     # Reset Progress
@@ -950,13 +1037,25 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             return error("Login is required", 401)
         conn = None
         try:
-            _, engine, _ = load_engine()
+            body = request.get_json(silent=True) or {}
+            career_param = body.get("careerId") or request.args.get("career")
+            career_id = resolve_career_id(
+                str(career_param) if career_param is not None else None,
+                user_id,
+            )
+            _, engine, _ = load_engine(career_id)
             conn = get_db()
-            ensure_user_tables(conn)
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM user_skill_progress WHERE user_id = %s", (user_id,))
+            db_store.ensure_schema(conn)
+            db_store.reset_progress(conn, user_id)
+            # Achievements derive from progress, so clear unlocked records
+            # too and let them re-evaluate from the reset state.
+            db_store.clear_user_achievements(conn, user_id)
+            roadmap_payload = engine.build_roadmap_payload(set())
+            attach_user_context(conn, user_id, set(), roadmap_payload)
             conn.commit()
-            return success(engine.build_roadmap_payload(set()), "Progress reset")
+            return success(roadmap_payload, "Progress reset")
+        except KeyError as exc:
+            return error(str(exc), 404)
         except psycopg2.Error as exc:
             if conn is not None:
                 conn.rollback()
@@ -966,40 +1065,6 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         finally:
             if conn is not None:
                 conn.close()
-
-        try:
-
-            def mutate(database: dict[str, Any]):
-                engine = GraphEngine(database)
-
-                database["progress"] = {
-                    "completedSkillIds": [],
-                    "updatedAt": datetime.now(
-                        timezone.utc
-                    ).isoformat(),
-                }
-
-                return engine.build_roadmap_payload(
-                    set()
-                )
-
-            roadmap_data = store.update(mutate)
-
-            return success(
-                roadmap_data,
-                "รีเซ็ต Progress เรียบร้อยแล้ว",
-            )
-
-        except (
-            KeyError,
-            GraphValidationError,
-            ValueError,
-        ) as exc:
-            return error(
-                "Could not reset progress",
-                500,
-                str(exc),
-            )
 
     # =====================================================
     # AI Recommendation
@@ -1024,7 +1089,16 @@ def create_app(database_path: str | Path | None = None) -> Flask:
         ).strip()
 
         try:
-            _, engine, completed = load_engine()
+            career_id = resolve_career_id(
+                body.get("careerId"), logged_in_user_id()
+            )
+            _, engine, _ = load_engine(career_id)
+            user_id = logged_in_user_id()
+            completed = (
+                load_completed_for_user(user_id, engine)
+                if user_id is not None
+                else set()
+            )
 
             valid_subjects = {
                 "all",
@@ -1094,8 +1168,12 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                 "AI recommendation generated",
             )
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
         except (
-            KeyError,
             GraphValidationError,
             ValueError,
         ) as exc:
@@ -1143,8 +1221,14 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             )
 
         try:
-
-            _, engine, completed = load_engine()
+            user_id = logged_in_user_id()
+            career_id = resolve_career_id(body.get("careerId"), user_id)
+            _, engine, _ = load_engine(career_id)
+            completed = (
+                load_completed_for_user(user_id, engine)
+                if user_id is not None
+                else set()
+            )
 
             valid_subjects = {
                 "all",
@@ -1184,6 +1268,11 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                 "AI analysis generated",
             )
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
         except (
             GraphValidationError,
             ValueError,
@@ -1233,8 +1322,15 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             )
 
         try:
-
-            _, engine, completed = load_engine()
+            user_id = logged_in_user_id()
+            career_id = resolve_career_id(body.get("careerId"), user_id)
+            _, engine, _ = load_engine(career_id)
+            completed = (
+                load_completed_for_user(user_id, engine)
+                if user_id is not None
+                else set()
+            )
+            analysis = AIAnalyzer.analyze(engine, completed)
 
             answer = AIService.ask_chat(
                 message,
@@ -1245,7 +1341,9 @@ def create_app(database_path: str | Path | None = None) -> Flask:
 
             return success(
                 {
-                    "answer": answer
+                    "answer": answer,
+                    "recommendedSkill": analysis["nextSkill"],
+                    "reason": analysis["reason"],
                 },
                 "AI response generated",
             )
@@ -1266,8 +1364,12 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                 str(exc),
             )
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
         except (
-            KeyError,
             GraphValidationError,
         ) as exc:
 
@@ -1313,8 +1415,14 @@ def create_app(database_path: str | Path | None = None) -> Flask:
             )
 
         try:
-
-            _, engine, completed = load_engine()
+            user_id = logged_in_user_id()
+            career_id = resolve_career_id(body.get("careerId"), user_id)
+            _, engine, _ = load_engine(career_id)
+            completed = (
+                load_completed_for_user(user_id, engine)
+                if user_id is not None
+                else set()
+            )
 
             analysis = AIAnalyzer.analyze(
                 engine,
@@ -1355,9 +1463,13 @@ def create_app(database_path: str | Path | None = None) -> Flask:
                 str(exc),
             )
 
+        except KeyError as exc:
+            return error(
+                str(exc),
+                404,
+            )
         except (
             GraphValidationError,
-            KeyError,
         ) as exc:
 
             return error(
