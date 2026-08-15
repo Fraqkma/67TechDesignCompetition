@@ -34,12 +34,17 @@ class StudyBuddyUiTests(unittest.TestCase):
         self.assertIn(
             "/api/social/study-groups/<int:group_id>/messages", rules
         )
+        self.assertIn("/api/social/world-chat/messages", rules)
 
     def test_roadmap_contains_integrated_friend_controls(self) -> None:
         response = self.client.get("/roadmap")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"buddy-nav-button", response.data)
+        self.assertIn(b"friend-hub-button", response.data)
+        self.assertIn(b"global-chat-button", response.data)
+        self.assertIn(b'href="/study-buddy#friends"', response.data)
+        self.assertIn(b'href="/study-buddy#global-chat"', response.data)
         self.assertIn(b"study-buddy-panel", response.data)
         self.assertIn(b"buddy-subject-tabs", response.data)
         self.assertIn(b"js/study-buddy-panel.js", response.data)
@@ -59,6 +64,21 @@ class StudyBuddyUiTests(unittest.TestCase):
         self.assertIn(b'id="joinable-group-list"', hub.data)
         self.assertIn(b'id="group-chat-dialog"', hub.data)
         self.assertIn(b'id="group-chat-messages"', hub.data)
+        self.assertIn(b'id="world-chat-messages"', hub.data)
+        self.assertIn(b'id="world-chat-form"', hub.data)
+        self.assertIn(b'id="global-chat"', hub.data)
+        self.assertIn(b"profileImage", javascript.data)
+
+    def test_main_menu_has_separate_friend_hub_and_global_chat_buttons(self) -> None:
+        for path in ("/", "/select-track"):
+            with self.subTest(path=path):
+                page = self.client.get(path)
+                self.addCleanup(page.close)
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(b"friend-hub-button", page.data)
+                self.assertIn(b"global-chat-button", page.data)
+                self.assertIn(b'href="/study-buddy#friends"', page.data)
+                self.assertIn(b'href="/study-buddy#global-chat"', page.data)
 
 
 if __name__ == "__main__":

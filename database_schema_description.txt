@@ -4,7 +4,7 @@
 
 เอกสารนี้อธิบายโครงสร้างฐานข้อมูล PostgreSQL ทั้งหมดที่ระบบใช้ (อัปเดตล่าสุด
 จาก schema จริงในฐานข้อมูล) ครอบคลุม:
-  - ตารางทั้งหมด 23 ตาราง พร้อมคอลัมน์จริงและความสัมพันธ์ (FK)
+  - ตารางทั้งหมด 25 ตาราง พร้อมคอลัมน์จริงและความสัมพันธ์ (FK)
   - สถานะการใช้งานของแต่ละตาราง (โค้ดใช้จริง / ยังไม่ใช้ / legacy)
   - คำแนะนำสำหรับตารางที่เกินมา
 
@@ -12,18 +12,16 @@
 0. สรุปภาพรวม (TABLES OVERVIEW)
 --------------------------------------------------------------------------------
 
-ตารางทั้งหมด 23 ตาราง แบ่งตามสถานะการใช้งานโดยโค้ด (app.py + backend/db_store.py)
+ตารางทั้งหมด 25 ตาราง แบ่งตามสถานะการใช้งานโดยโค้ด (app.py + backend/)
 เป็น 3 กลุ่ม:
 
-  A) ตารางที่โค้ดใช้งานจริง (ACTIVE) .......... 13 ตาราง
-  B) ตารางที่ถูกอ่านเพื่อคำนวณ Achievement ..... 2 ตาราง (friendships, study_sessions)
-  C) ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) ....... 8 ตาราง (social module ยังไม่ทำ)
+  A) ตารางที่โค้ดใช้งานจริง (ACTIVE) .......... 19 ตาราง
+  B) ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) ....... 5 ตาราง
 
   ตาราง legacy ที่แนะนำให้ลบ/ย้ายข้อมูล ....... 1 ตาราง (user_skill_progress)
 
-หมายเหตุ: db_store.ensure_schema() สร้าง (CREATE TABLE IF NOT EXISTS) เฉพาะ
-ตารางในกลุ่ม A และ B เท่านั้น ตารางกลุ่ม C เกิดจาก branch อื่น/สคริปต์เก่า
-และไม่มีโค้ดใดอ่านหรือเขียน
+หมายเหตุ: db_store.ensure_schema() สร้างตารางหลัก และ
+study_buddy_store.ensure_social_schema() สร้างตารางโซเชียลแบบ idempotent
 
 --------------------------------------------------------------------------------
 1. สถานะการใช้งานตาราง (TABLE STATUS)
@@ -32,7 +30,7 @@
  ตาราง                    | สถานะ      | ใช้โดย                              | จำนวนแถว
  -------------------------|------------|-------------------------------------|---------
  users                    | ACTIVE     | auth (app.py), db_store             | 16
- user_profiles            | ACTIVE     | db_store (EXP/level/career)         | 16
+ user_profiles            | ACTIVE     | profile + social avatars            | 16
  user_node_progress       | ACTIVE     | db_store (progress)                 | 30
  careers                  | ACTIVE     | db_store (list_careers)             | 6
  nodes                    | ACTIVE     | db_store (load_database)            | 40
@@ -42,17 +40,19 @@
  achievements             | ACTIVE     | db_store (achievements)             | 4
  user_achievements        | ACTIVE     | db_store (achievements)             | 5
  ranks                    | ACTIVE     | db_store (load_rank)                | 5
- friendships              | ACH-READ   | db_store (load_user_stats)          | 2
+ friendships              | ACTIVE     | study_buddy_store + achievement     | 2
  study_sessions           | ACH-READ   | db_store (load_user_stats)          | 2
  certificates             | UNUSED     | -                                   | 1
  session_members          | UNUSED     | -                                   | 2
  chat_messages            | UNUSED     | -                                   | 3
  friend_requests          | UNUSED     | -                                   | 0
- study_groups             | UNUSED     | -                                   | 0
- study_group_members      | UNUSED     | -                                   | 0
+ study_groups             | ACTIVE     | study_buddy_store (groups)          | 0
+ study_group_members      | ACTIVE     | study_buddy_store (groups)          | 0
+ study_group_messages     | ACTIVE     | study_buddy_store (group chat)      | 0
  study_buddy_friendships  | UNUSED     | -                                   | 0
- buddy_notifications      | UNUSED     | -                                   | 0
- study_path_shares        | UNUSED     | -                                   | 0
+ buddy_notifications      | ACTIVE     | study_buddy_store (notifications)   | 0
+ study_path_shares        | ACTIVE     | study_buddy_store (path share)      | 0
+ world_chat_messages      | ACTIVE     | study_buddy_store + social routes   | 0
  user_skill_progress      | LEGACY     | - (prototype เก่า)                  | 24
 
 --------------------------------------------------------------------------------
@@ -69,16 +69,18 @@
 - nodes (1) <---> (1) subjects (หมวดวิชา, subject_id)
 
 - users (1) <---> (N) certificates        [UNUSED]
-- users (1) <---> (N) friendships         [อ่านเพื่อนับ achievement]
+- users (1) <---> (N) friendships         [ACTIVE — ระบบเพื่อน]
 - users (1) <---> (N) friend_requests     [UNUSED]
 - users (1) <---> (N) study_sessions      [อ่านเพื่อนับ achievement]
 - study_sessions (1) <---> (N) session_members   [UNUSED]
 - study_sessions (1) <---> (N) chat_messages     [UNUSED]
-- users (1) <---> (N) study_groups        [UNUSED]
-- study_groups (1) <---> (N) study_group_members [UNUSED]
+- users (1) <---> (N) study_groups        [ACTIVE — เจ้าของกลุ่ม]
+- study_groups (1) <---> (N) study_group_members [ACTIVE]
+- study_groups (1) <---> (N) study_group_messages [ACTIVE — แชตกลุ่ม]
 - users (1) <---> (N) study_buddy_friendships    [UNUSED]
-- users (1) <---> (N) buddy_notifications        [UNUSED]
-- users (1) <---> (N) study_path_shares          [UNUSED]
+- users (1) <---> (N) buddy_notifications        [ACTIVE]
+- users (1) <---> (N) study_path_shares          [ACTIVE]
+- users (1) <---> (N) world_chat_messages        [ACTIVE — แชตโลก]
 
 --------------------------------------------------------------------------------
 3. หมวดผู้ใช้งานและโปรไฟล์ (USER & PROFILE MODULE) — ACTIVE
@@ -96,13 +98,14 @@
 เงื่อนไขพิเศษ: UNIQUE (uid, email)
 
 [TABLE: user_profiles]
-คำอธิบาย: เก็บข้อมูลโปรไฟล์ Gamification (Level/EXP) และสายอาชีพที่กำลังเรียน
+คำอธิบาย: เก็บข้อมูลโปรไฟล์ Gamification, สายอาชีพ และรูปโปรไฟล์หลักที่ใช้ร่วมกัน
 คอลัมน์:
 - user_id (BIGINT, PK, FK)       : รหัสผู้ใช้ (-> users.id / CASCADE)
 - display_name (VARCHAR)         : ชื่อที่ใช้แสดงผลในระบบ
 - level (INTEGER)                : เลเวลปัจจุบัน (ค่าเริ่มต้น: 1)
 - current_exp (INTEGER)          : EXP สะสมปัจจุบัน (ค่าเริ่มต้น: 0)
 - current_career_id (BIGINT, FK) : สายอาชีพที่เลือกเรียน (-> careers.id / SET NULL)
+- profile_picture (BYTEA)        : รูปโปรไฟล์หลัก เก็บเป็น binary และ render เป็น data URL
 - updated_at (TIMESTAMP)         : เวลาอัปเดตล่าสุด
 
 [TABLE: user_node_progress]
@@ -177,6 +180,7 @@
 - description (TEXT)         : คำอธิบาย/เงื่อนไข
 - icon_url (VARCHAR)         : ลิงก์รูปไอคอน
 - condition (TEXT)           : [ใหม่] เงื่อนไขปลดล็อกในรูป JSON
+- category (VARCHAR(40))     : แยก badge ทั่วไปออกจาก career_progress tier
                               เช่น {"type": "exp", "target": 500}
                               type ที่รองรับ: completed_skills | exp | friends | study_sessions
 
@@ -199,12 +203,12 @@
 - min_progress (INTEGER)  : เปอร์เซ็นต์ความคืบหน้าขั้นต่ำของ Rank นี้
 
 --------------------------------------------------------------------------------
-6. ตารางที่อ่านเพื่อคำนวณ Achievement (ACHIEVEMENT-READ) — ยังไม่มี UI
+6. หมวดโซเชียลและ STUDY BUDDY — ACTIVE
 --------------------------------------------------------------------------------
 
 [TABLE: friendships]
-คำอธิบาย: ความสัมพันธ์เพื่อนระหว่างผู้ใช้ (แอดด้วย UID / สแกน QR) — ปัจจุบัน
-โค้ดอ่านเฉพาะจำนวนเพื่อน status='accepted' เพื่อปลดล็อกตรา "Social Butterfly"
+คำอธิบาย: ความสัมพันธ์เพื่อนและคำขอเป็นเพื่อน ใช้จริงใน Friend Hub และอ่าน
+จำนวน status='accepted' เพื่อคำนวณ Achievement
 คอลัมน์:
 - id (BIGSERIAL, PK)       : รหัสรายการความสัมพันธ์
 - user_id (BIGINT, FK)     : ผู้ขอแอดเพื่อน (-> users.id)
@@ -224,14 +228,46 @@
 - is_active (BOOLEAN)        : TRUE = เปิดอยู่, FALSE = ปิดแล้ว
 - created_at (TIMESTAMP)     : วันเวลาที่สร้างห้อง
 
+[TABLE: study_groups]
+คำอธิบาย: กลุ่มติวของผู้ใช้และเพื่อน
+คอลัมน์: id, name, owner_user_id (-> users.id), graph_career_id,
+        graph_focus_skill_id, created_at
+
+[TABLE: study_group_members]
+คำอธิบาย: สมาชิกและบทบาทในกลุ่มติว
+คอลัมน์: group_id (PK, -> study_groups.id), user_id (PK, -> users.id),
+        role, joined_at
+
+[TABLE: study_group_messages]
+คำอธิบาย: ข้อความ text ภายในกลุ่มติว พร้อมตัวตนผู้ส่งจาก user_profiles
+คอลัมน์: id, group_id (-> study_groups.id), sender_user_id (-> users.id),
+        content, created_at
+
+[TABLE: buddy_notifications]
+คำอธิบาย: การแจ้งเตือนคำขอเพื่อน กิจกรรม การแชร์เส้นทาง และกลุ่มติว
+คอลัมน์: id, user_id, actor_user_id, kind, title, body, payload (JSONB),
+        read_at, created_at
+
+[TABLE: study_path_shares]
+คำอธิบาย: snapshot ของ Skill Tree ที่แชร์ให้เพื่อน โดยข้อมูลเส้นทางมาจาก Graph Engine
+คอลัมน์: id, sender_user_id, receiver_user_id, graph_career_id, message,
+        snapshot (JSONB), created_at
+
+[TABLE: world_chat_messages]
+คำอธิบาย: ข้อความ Global Chat แบบ text ที่ผู้ใช้ที่เข้าสู่ระบบทุกคนอ่านและเขียนได้
+คอลัมน์:
+- id (BIGSERIAL, PK)       : รหัสข้อความ
+- user_id (BIGINT, FK)     : ผู้ส่ง (-> users.id / CASCADE)
+- content (TEXT)           : เนื้อหาข้อความ สูงสุด 1000 ตัวอักษรใน API
+- created_at (TIMESTAMP)   : เวลาที่ส่ง
+หมายเหตุ: API join users และ user_profiles เพื่อส่ง display name, UID และ
+profile_picture ของเจ้าของข้อความให้ UI render
+
 --------------------------------------------------------------------------------
-7. ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) — มาจาก branch โซเชียล/study buddy
+7. ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) — legacy social design
 --------------------------------------------------------------------------------
 
-ตารางกลุ่มนี้ถูกออกแบบไว้สำหรับฟีเจอร์โซเชียลและ Study Buddy แต่ยังไม่มี
-โค้ด (app.py / db_store.py / templates) อ่านหรือเขียนเลย มีเพียงข้อมูล seed
-ตัวอย่าง ฟีเจอร์ Achievement สองรายการอ่านตาราง friendships / study_sessions
-(หมวด 6) เท่านั้น
+ตารางกลุ่มนี้มาจาก social design รุ่นเดิมและยังไม่มีโค้ดอ่านหรือเขียน
 
 [TABLE: certificates] (1 แถว)
 คำอธิบาย: เก็บข้อมูลไฟล์เกียรติบัตรดิจิทัล (E-Certificate) ที่ผู้ใช้อัปโหลด
@@ -252,29 +288,9 @@
         status ('pending'), message, created_at, responded_at
 เงื่อนไขพิเศษ: UNIQUE (requester_user_id, addressee_user_id)
 
-[TABLE: study_groups] (0 แถว)
-คำอธิบาย: กลุ่มเรียน/กลุ่มติว
-คอลัมน์: id, name, owner_user_id (-> users.id), career_id (-> careers.id),
-        focus_node_id (-> nodes.id), created_at
-
-[TABLE: study_group_members] (0 แถว)
-คำอธิบาย: สมาชิกกลุ่มเรียน
-คอลัมน์: group_id (PK, -> study_groups.id), user_id (PK, -> users.id),
-        role ('member'), joined_at
-
 [TABLE: study_buddy_friendships] (0 แถว)
 คำอธิบาย: ความสัมพันธ์คู่หูติว (แนวคิดคล้าย friendships แต่แยกเจตนา)
 คอลัมน์: user_id (PK, -> users.id), friend_user_id (PK, -> users.id), created_at
-
-[TABLE: buddy_notifications] (0 แถว)
-คำอธิบาย: การแจ้งเตือนในระบบคู่หูติว
-คอลัมน์: id, user_id (-> users.id), actor_user_id (-> users.id), kind, title,
-        body, payload (JSONB), read_at, created_at
-
-[TABLE: study_path_shares] (0 แถว)
-คำอธิบาย: การแชร์เส้นทางการเรียน (snapshot ของ Skill Tree) ให้เพื่อน
-คอลัมน์: id, sender_user_id (-> users.id), receiver_user_id (-> users.id),
-        career_id (-> careers.id), message, snapshot (JSONB), created_at
 
 --------------------------------------------------------------------------------
 8. ตาราง LEGACY ที่ไม่ได้ใช้งาน (แนะนำให้จัดการ)
@@ -299,14 +315,11 @@ skill_id เป็น string (เช่น 'programming_fundamentals', 'basic_al
    - ถ้าอยากเก็บประวัติ: ย้ายข้อมูลโดย map skill_id (string) -> nodes.id (BIGINT)
      โดยเทียบชื่อวิชาเก่ากับ nodes.title ให้ตรงกันก่อน แล้วจึงลบตาราง
 
-2) ตารางโซเชียลที่ยังไม่ใช้ (certificates, chat_messages, session_members,
-   friend_requests, study_groups, study_group_members, study_buddy_friendships,
-   buddy_notifications, study_path_shares)
-   - ถ้าแผนงานมีฟีเจอร์โซเชียล/Study Buddy ต่อจากนี้: เก็บไว้เป็น Design Reference
-     แต่ควรเพิ่มลงใน SCHEMA_STATEMENTS ของ db_store.py ด้วย เพื่อให้
-     ensure_schema() สร้างตารางให้ครบในฐานข้อมูลใหม่ (ตอนนี้สร้างไม่ครบ)
-   - ถ้ายกเลิกฟีเจอร์โซเชียล: ลบ 8 ตารางนี้ออก (เก็บ friendships + study_sessions
-     ไว้ เพราะ achievement อ่านอยู่)
+2) ตาราง social design รุ่นเดิมที่ยังไม่ใช้ (certificates, chat_messages,
+   session_members, friend_requests, study_buddy_friendships)
+   - พิจารณาย้ายข้อมูลหรือลบเมื่อยืนยันว่าไม่มี feature เก่าอ้างอิง
+   - อย่าสับสน chat_messages รุ่นเดิมกับ study_group_messages และ
+     world_chat_messages ที่ระบบปัจจุบันใช้งานจริง
 
 3) การเพิ่มตารางใหม่ในอนาคต
    - ให้เพิ่ม DDL ใน SCHEMA_STATEMENTS (backend/db_store.py) เสมอ เพื่อให้
@@ -320,6 +333,9 @@ skill_id เป็น string (เช่น 'programming_fundamentals', 'basic_al
 --------------------------------------------------------------------------------
 10. หมายเหตุการแก้ไขเอกสาร (CHANGELOG)
 --------------------------------------------------------------------------------
+- v3: เปิดใช้ Friend Hub, Study Buddy, group chat และ Global Chat
+      เพิ่ม world_chat_messages และ profile_picture ใน user_profiles
+      พร้อมแสดงชื่อ UID และรูปโปรไฟล์เดียวกันใน social UI
 - v2: เพิ่มตารางใหม่ (subjects, achievements, user_achievements, ranks)
       เพิ่มคอลัมน์ใหม่ใน nodes (subject_id, thai_title, career_relevance,
       techniques, learning_outcomes, real_world)

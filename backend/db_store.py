@@ -17,6 +17,7 @@ contract stays unchanged and the database stays the single source of truth.
 
 from __future__ import annotations
 
+import base64
 import json
 from collections import defaultdict
 from typing import Any
@@ -92,6 +93,7 @@ SCHEMA_STATEMENTS: list[str] = [
         level INTEGER NOT NULL DEFAULT 1,
         current_exp INTEGER NOT NULL DEFAULT 0,
         current_career_id BIGINT REFERENCES careers(id) ON DELETE SET NULL,
+        profile_picture BYTEA,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
@@ -158,6 +160,9 @@ SCHEMA_STATEMENTS: list[str] = [
     ALTER TABLE achievements ADD COLUMN IF NOT EXISTS condition TEXT
     """,
     """
+    ALTER TABLE achievements ADD COLUMN IF NOT EXISTS category VARCHAR(40)
+    """,
+    """
     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS subject_id BIGINT
     """,
     """
@@ -175,7 +180,34 @@ SCHEMA_STATEMENTS: list[str] = [
     """
     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS real_world TEXT NOT NULL DEFAULT '[]'
     """,
+    """
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS profile_picture BYTEA
+    """,
 ]
+
+
+def profile_image_data_url(image: Any) -> str | None:
+    """Convert a stored profile image into the data URL used by every UI."""
+
+    if image is None:
+        return None
+    data = bytes(image)
+    if not data:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime_type = "image/png"
+    elif data.startswith((b"\xff\xd8\xff",)):
+        mime_type = "image/jpeg"
+    elif data.startswith((b"GIF87a", b"GIF89a")):
+        mime_type = "image/gif"
+    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        mime_type = "image/webp"
+    elif data.lstrip().startswith(b"<svg"):
+        mime_type = "image/svg+xml"
+    else:
+        mime_type = "image/png"
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 # =========================================================
@@ -694,12 +726,13 @@ def reset_progress(conn, user_id: int) -> None:
 
 
 def load_achievements(conn) -> list[dict[str, Any]]:
-    """Return every achievement definition from the achievements table."""
+    """Return general badges without leaking career-tier achievements."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT id, title, description, icon_url, condition
             FROM achievements
+            WHERE category IS DISTINCT FROM 'career_progress'
             ORDER BY id
             """
         )

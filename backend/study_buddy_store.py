@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable
 
+from backend import db_store
+
 
 SOCIAL_SCHEMA_STATEMENTS = [
     """
@@ -48,6 +50,14 @@ SOCIAL_SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS world_chat_messages (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS buddy_notifications (
         id BIGSERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -85,6 +95,10 @@ SOCIAL_SCHEMA_STATEMENTS = [
     ON study_group_messages (group_id, created_at DESC)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_world_chat_messages_created
+    ON world_chat_messages (created_at DESC, id DESC)
+    """,
+    """
     ALTER TABLE study_groups
     ADD COLUMN IF NOT EXISTS graph_career_id TEXT
     """,
@@ -115,6 +129,7 @@ def _person(row) -> dict[str, Any]:
         "level": row[4] or 1,
         "currentCareerId": row[5],
         "careerName": "",
+        "profileImage": db_store.profile_image_data_url(row[6]),
     }
 
 
@@ -123,7 +138,7 @@ def get_person(conn, user_id: int) -> dict[str, Any] | None:
         cur.execute(
             """
             SELECT u.id, u.uid, p.display_name, u.email, p.level,
-                   p.current_career_id
+                   p.current_career_id, p.profile_picture
             FROM users u
             LEFT JOIN user_profiles p ON p.user_id = u.id
             WHERE u.id = %s
@@ -145,7 +160,7 @@ def search_people(
         cur.execute(
             """
             SELECT u.id, u.uid, p.display_name, u.email, p.level,
-                   p.current_career_id
+                   p.current_career_id, p.profile_picture
             FROM users u
             LEFT JOIN user_profiles p ON p.user_id = u.id
             WHERE u.id <> %s
@@ -226,7 +241,8 @@ def list_incoming_requests(conn, user_id: int) -> list[dict[str, Any]]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT f.id, u.id, u.uid, p.display_name, u.email, f.created_at
+            SELECT f.id, u.id, u.uid, p.display_name, u.email,
+                   p.profile_picture, f.created_at
             FROM friendships f
             JOIN users u ON u.id = f.user_id
             LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -241,7 +257,8 @@ def list_incoming_requests(conn, user_id: int) -> list[dict[str, Any]]:
                 "userId": row[1],
                 "uid": row[2],
                 "displayName": row[3] or row[4].split("@", 1)[0],
-                "createdAt": row[5].isoformat(),
+                "profileImage": db_store.profile_image_data_url(row[5]),
+                "createdAt": row[6].isoformat(),
             }
             for row in cur.fetchall()
         ]
@@ -282,7 +299,7 @@ def list_friends(conn, user_id: int) -> list[dict[str, Any]]:
             """
             SELECT DISTINCT ON (u.id)
                    u.id, u.uid, p.display_name, u.email, p.level,
-                   p.current_career_id
+                   p.current_career_id, p.profile_picture
             FROM friendships f
             JOIN users u
               ON u.id = CASE
@@ -366,7 +383,8 @@ def list_notifications(
         cur.execute(
             """
             SELECT n.id, n.kind, n.title, n.body, n.payload, n.read_at,
-                   n.created_at, u.uid, p.display_name, u.email
+                   n.created_at, u.uid, p.display_name, u.email,
+                   p.profile_picture
             FROM buddy_notifications n
             JOIN users u ON u.id = n.actor_user_id
             LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -388,6 +406,7 @@ def list_notifications(
                 "actor": {
                     "uid": row[7],
                     "displayName": row[8] or row[9].split("@", 1)[0],
+                    "profileImage": db_store.profile_image_data_url(row[10]),
                 },
             }
             for row in cur.fetchall()
@@ -443,7 +462,7 @@ def list_received_path_shares(
         cur.execute(
             """
             SELECT s.id, s.message, s.snapshot, s.created_at,
-                   u.uid, p.display_name, u.email
+                   u.uid, p.display_name, u.email, p.profile_picture
             FROM study_path_shares s
             JOIN users u ON u.id = s.sender_user_id
             LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -462,6 +481,7 @@ def list_received_path_shares(
                 "sender": {
                     "uid": row[4],
                     "displayName": row[5] or row[6].split("@", 1)[0],
+                    "profileImage": db_store.profile_image_data_url(row[7]),
                 },
             }
             for row in cur.fetchall()
@@ -543,13 +563,13 @@ def get_study_group(conn, group_id: int) -> dict[str, Any] | None:
             SELECT g.id, g.name, g.owner_user_id, g.graph_career_id,
                    g.graph_focus_skill_id, g.created_at,
                    COUNT(gm.user_id)::int,
-                   u.uid, p.display_name, u.email
+                   u.uid, p.display_name, u.email, p.profile_picture
             FROM study_groups g
             JOIN users u ON u.id = g.owner_user_id
             LEFT JOIN user_profiles p ON p.user_id = u.id
             LEFT JOIN study_group_members gm ON gm.group_id = g.id
             WHERE g.id = %s
-            GROUP BY g.id, u.uid, p.display_name, u.email
+            GROUP BY g.id, u.uid, p.display_name, u.email, p.profile_picture
             """,
             (group_id,),
         )
@@ -569,6 +589,7 @@ def get_study_group(conn, group_id: int) -> dict[str, Any] | None:
         "owner": {
             "uid": row[7],
             "displayName": row[8] or row[9].split("@", 1)[0],
+            "profileImage": db_store.profile_image_data_url(row[10]),
         },
     }
 
@@ -606,7 +627,7 @@ def list_joinable_study_groups(
             SELECT g.id, g.name, g.owner_user_id, g.graph_career_id,
                    g.graph_focus_skill_id, g.created_at,
                    COUNT(gm.user_id)::int,
-                   u.uid, p.display_name, u.email
+                   u.uid, p.display_name, u.email, p.profile_picture
             FROM study_groups g
             JOIN users u ON u.id = g.owner_user_id
             LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -624,7 +645,7 @@ def list_joinable_study_groups(
                     (f.friend_id = %s AND f.user_id = g.owner_user_id)
                   )
               )
-            GROUP BY g.id, u.uid, p.display_name, u.email
+            GROUP BY g.id, u.uid, p.display_name, u.email, p.profile_picture
             ORDER BY g.created_at DESC
             LIMIT 20
             """,
@@ -644,6 +665,7 @@ def list_joinable_study_groups(
                 "owner": {
                     "uid": row[7],
                     "displayName": row[8] or row[9].split("@", 1)[0],
+                    "profileImage": db_store.profile_image_data_url(row[10]),
                 },
             }
             for row in cur.fetchall()
@@ -754,7 +776,7 @@ def list_group_messages(
         cur.execute(
             """
             SELECT m.id, m.content, m.created_at,
-                   u.id, u.uid, p.display_name, u.email
+                   u.id, u.uid, p.display_name, u.email, p.profile_picture
             FROM study_group_messages m
             JOIN users u ON u.id = m.sender_user_id
             LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -774,6 +796,7 @@ def list_group_messages(
                 "id": row[3],
                 "uid": row[4],
                 "displayName": row[5] or row[6].split("@", 1)[0],
+                "profileImage": db_store.profile_image_data_url(row[7]),
             },
         }
         for row in reversed(rows)
@@ -794,6 +817,66 @@ def create_group_message(
             RETURNING id, created_at
             """,
             (group_id, sender_user_id, content),
+        )
+        message_id, created_at = cur.fetchone()
+    return {
+        "id": message_id,
+        "content": content,
+        "createdAt": created_at.isoformat(),
+    }
+
+
+def list_world_chat_messages(
+    conn,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Return recent global messages with their current profile identity."""
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT m.id, m.content, m.created_at,
+                   u.id, u.uid, p.display_name, u.email, p.profile_picture
+            FROM world_chat_messages m
+            JOIN users u ON u.id = m.user_id
+            LEFT JOIN user_profiles p ON p.user_id = u.id
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "id": row[0],
+            "content": row[1],
+            "createdAt": row[2].isoformat(),
+            "sender": {
+                "id": row[3],
+                "uid": row[4],
+                "displayName": row[5] or row[6].split("@", 1)[0],
+                "profileImage": db_store.profile_image_data_url(row[7]),
+            },
+        }
+        for row in reversed(rows)
+    ]
+
+
+def create_world_chat_message(
+    conn,
+    user_id: int,
+    content: str,
+) -> dict[str, Any]:
+    """Persist one text-only Global Chat message."""
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO world_chat_messages (user_id, content)
+            VALUES (%s, %s)
+            RETURNING id, created_at
+            """,
+            (user_id, content),
         )
         message_id, created_at = cur.fetchone()
     return {

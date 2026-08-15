@@ -38,6 +38,13 @@
     );
   }
 
+  function avatarContent(person) {
+    if (person?.profileImage) {
+      return `<img class="profile-avatar" src="${escapeHtml(person.profileImage)}" alt="" />`;
+    }
+    return escapeHtml(initials(person?.displayName));
+  }
+
   function safeColor(value) {
     return /^#[0-9a-f]{3,8}$/i.test(String(value || ""))
       ? value
@@ -166,9 +173,7 @@
         const reason = reasons[0];
         return `
           <article class="buddy-match-row">
-            <span class="buddy-match-avatar" aria-hidden="true">${escapeHtml(
-              initials(match.displayName)
-            )}</span>
+            <span class="buddy-match-avatar" aria-hidden="true">${avatarContent(match)}</span>
             <div class="buddy-match-copy">
               <strong>${escapeHtml(match.displayName)}</strong>
               <small>ตรงกัน ${escapeHtml(match.matchScore)}% · #${escapeHtml(
@@ -211,11 +216,11 @@
       renderTabs();
       renderSubject();
     } catch (error) {
-      elements.count.textContent = "ออฟไลน์";
+      elements.count.textContent = "โหลดไม่สำเร็จ";
       elements.tabs.innerHTML = "";
       elements.content.innerHTML = `<div class="buddy-panel-error">${escapeHtml(
         error.message
-      )}<br><a class="buddy-empty-link" href="/study-buddy">เปิด Friend Hub</a></div>`;
+      )}<br><button class="buddy-empty-link" type="button" data-buddy-retry>ลองอีกครั้ง</button> · <a class="buddy-empty-link" href="/study-buddy">เปิด Friend Hub</a></div>`;
     }
   }
 
@@ -225,6 +230,12 @@
   });
 
   elements.content.addEventListener("click", async (event) => {
+    const retry = event.target.closest("[data-buddy-retry]");
+    if (retry) {
+      retry.disabled = true;
+      await loadPanel();
+      return;
+    }
     const button = event.target.closest("[data-buddy-share]");
     if (!button) return;
     button.disabled = true;

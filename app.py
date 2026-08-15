@@ -178,7 +178,14 @@ def create_app(database_path: str | None = None) -> Flask:
     def logged_in_user_id() -> int | None:
         """Return the authenticated user id without trusting request data."""
         user_id = session.get("user_id")
-        return user_id if isinstance(user_id, int) else None
+        if isinstance(user_id, bool):
+            return None
+        if isinstance(user_id, int):
+            return user_id if user_id > 0 else None
+        if isinstance(user_id, str) and user_id.isdigit():
+            parsed = int(user_id)
+            return parsed if parsed > 0 else None
+        return None
 
     def resolve_career_id(
         career_param: str | None,
@@ -441,6 +448,8 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             conn = get_db()
+            db_store.ensure_schema(conn)
+            conn.commit()
             cur = conn.cursor()
 
             cur.execute(
@@ -491,6 +500,7 @@ def create_app(database_path: str | None = None) -> Flask:
                     "id": user_id,
                     "uid": uid,
                     "email": user_email,
+                    "redirect": "/select-track",
                 },
                 "Login สำเร็จ",
             )
@@ -517,7 +527,7 @@ def create_app(database_path: str | None = None) -> Flask:
     def current_user():
         """Return currently logged-in user and profile."""
 
-        user_id = session.get("user_id")
+        user_id = logged_in_user_id()
 
         if user_id is None:
             return error(
@@ -530,6 +540,8 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             conn = get_db()
+            db_store.ensure_schema(conn)
+            conn.commit()
             cur = conn.cursor()
 
             cur.execute(
@@ -541,7 +553,8 @@ def create_app(database_path: str | None = None) -> Flask:
                     p.display_name,
                     p.level,
                     p.current_exp,
-                    p.current_career_id
+                    p.current_career_id,
+                    p.profile_picture
                 FROM users u
                 LEFT JOIN user_profiles p
                     ON p.user_id = u.id
@@ -568,6 +581,7 @@ def create_app(database_path: str | None = None) -> Flask:
                 level,
                 current_exp,
                 current_career_id,
+                profile_picture,
             ) = user
 
             return success(
@@ -579,6 +593,9 @@ def create_app(database_path: str | None = None) -> Flask:
                     "level": level,
                     "currentExp": current_exp,
                     "currentCareerId": current_career_id,
+                    "profileImage": db_store.profile_image_data_url(
+                        profile_picture
+                    ),
                 }
             )
 

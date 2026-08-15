@@ -13,6 +13,8 @@
       header { width: min(100% - 40px, 860px); margin: auto; min-height: 80px; display: flex; align-items: center; justify-content: space-between; } a { color: #75e6ff; text-decoration: none; font-weight: 700; }
       main { width: min(100% - 40px, 620px); margin: 56px auto; padding: 40px; border: 1px solid #335170; border-radius: 24px; background: rgba(8, 24, 45, .92); box-shadow: 0 24px 80px #0008; }
       .eyebrow { color: #6de5ff; font-size: .8rem; letter-spacing: .15em; font-weight: 800; } h1 { margin: 12px 0 8px; } p { color: #a9bed2; line-height: 1.6; } label { display: block; margin: 24px 0 8px; font-weight: 700; } input { width: 100%; padding: 14px; border: 1px solid #41617c; border-radius: 12px; background: #091a2e; color: #eef5ff; font: inherit; } input:disabled { color: #a9bed2; } button { border: 0; border-radius: 12px; padding: 13px 18px; font: 700 1rem inherit; cursor: pointer; } #save { margin-top: 24px; background: linear-gradient(100deg, #54d7f2, #7b70ff); color: #071324; } #logout { float: right; background: transparent; border: 1px solid #a95364; color: #ffabb4; } #message { min-height: 1.3em; margin-top: 16px; color: #8de6b2; } #message.error { color: #ff9da2; }
+      .profile-portrait { width: 112px; height: 112px; margin: 22px 0; display: grid; place-items: center; overflow: hidden; border: 2px solid #51c8e8; border-radius: 28px; background: #091a2e; color: #75e6ff; font-size: 2rem; font-weight: 800; }
+      .profile-portrait img { width: 100%; height: 100%; object-fit: cover; }
     </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/cosmic-theme.css') }}" />
   </head>
@@ -23,6 +25,10 @@
       <div class="eyebrow">LEARNER PROFILE</div>
       <h1>โปรไฟล์ของฉัน</h1>
       <p>ตั้งชื่อที่ใช้แสดงใน Skill Map ได้ที่นี่</p>
+      <div class="profile-portrait" aria-label="รูปโปรไฟล์หลัก">
+        <img id="profile-avatar" alt="รูปโปรไฟล์" hidden />
+        <span id="profile-avatar-fallback" aria-hidden="true">?</span>
+      </div>
       <form id="profile-form">
         <label for="email">Email</label><input id="email" type="email" disabled />
         <label for="display-name">Display name</label><input id="display-name" type="text" maxlength="80" required />
@@ -41,7 +47,20 @@
         return body;
       }
       async function loadProfile() {
-        try { const user = (await requestJson('/api/me')).data; document.querySelector('#email').value = user.email; document.querySelector('#display-name').value = user.displayName || ''; }
+        try {
+          const user = (await requestJson('/api/me')).data;
+          document.querySelector('#email').value = user.email;
+          document.querySelector('#display-name').value = user.displayName || '';
+          const avatar = document.querySelector('#profile-avatar');
+          const fallback = document.querySelector('#profile-avatar-fallback');
+          if (user.profileImage) {
+            avatar.src = user.profileImage;
+            avatar.hidden = false;
+            fallback.hidden = true;
+          } else {
+            fallback.textContent = (user.displayName || user.email || '?').trim().charAt(0).toUpperCase();
+          }
+        }
         catch (_) { window.location.assign('/login'); }
       }
       document.querySelector('#profile-form').addEventListener('submit', async (event) => {

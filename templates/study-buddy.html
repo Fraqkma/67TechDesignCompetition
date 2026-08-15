@@ -151,6 +151,35 @@
         </div>
 
         <aside class="secondary-column">
+          <article class="panel world-chat-panel" id="global-chat">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">GLOBAL CHAT</span>
+                <h2>แชทกับผู้เรียนทุกคน</h2>
+              </div>
+              <span class="world-chat-live"><i aria-hidden="true"></i> LIVE</span>
+            </div>
+            <p class="muted">ข้อความถูกบันทึกในฐานข้อมูลและแสดงชื่อกับรูปโปรไฟล์ของผู้ส่ง</p>
+            <div
+              class="world-chat-messages"
+              id="world-chat-messages"
+              aria-live="polite"
+              aria-label="ข้อความ Global Chat"
+            ></div>
+            <form class="world-chat-form" id="world-chat-form">
+              <label class="sr-only" for="world-chat-input">ข้อความ Global Chat</label>
+              <textarea
+                id="world-chat-input"
+                rows="2"
+                maxlength="1000"
+                placeholder="พิมพ์ข้อความถึงทุกคน..."
+                required
+              ></textarea>
+              <button class="button primary" id="world-chat-send" type="submit">ส่ง</button>
+            </form>
+            <span class="world-chat-status" id="world-chat-status" role="status"></span>
+          </article>
+
           <article class="panel notification-panel">
             <div class="panel-heading">
               <div>
