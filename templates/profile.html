@@ -23,6 +23,13 @@
       <div class="eyebrow">LEARNER PROFILE</div>
       <h1>โปรไฟล์ของฉัน</h1>
       <p>ตั้งชื่อที่ใช้แสดงใน Skill Map ได้ที่นี่</p>
+      <div style="display:flex; align-items:center; gap:18px; margin: 24px 0;">
+        <img id="profile-avatar" alt="profile avatar" width="96" height="96" style="border-radius: 50%; object-fit: cover; border: 2px solid rgba(115,229,193,0.6); background:#0b1830;" />
+        <div>
+          <div style="font-size:.8rem; letter-spacing:.12em; opacity:.7; text-transform:uppercase;">Portrait</div>
+          <div id="profile-prompt" style="margin-top:8px; color:#a9bed2; max-width: 280px; line-height:1.5;"></div>
+        </div>
+      </div>
       <form id="profile-form">
         <label for="email">Email</label><input id="email" type="email" disabled />
         <label for="display-name">Display name</label><input id="display-name" type="text" maxlength="80" required />
@@ -41,7 +48,19 @@
         return body;
       }
       async function loadProfile() {
-        try { const user = (await requestJson('/api/me')).data; document.querySelector('#email').value = user.email; document.querySelector('#display-name').value = user.displayName || ''; }
+        try {
+          const user = (await requestJson('/api/me')).data;
+          document.querySelector('#email').value = user.email;
+          document.querySelector('#display-name').value = user.displayName || '';
+          const avatar = document.querySelector('#profile-avatar');
+          if (user.profileImage) {
+            avatar.src = user.profileImage;
+          } else {
+            avatar.src = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#0d1b2a"/><circle cx="48" cy="38" r="21" fill="#73e5c1"/><rect x="18" y="60" width="60" height="24" rx="12" fill="#6dc8ff"/></svg>');
+          }
+          const promptText = document.querySelector('#profile-prompt');
+          promptText.textContent = user.profilePrompt || 'Your next profile portrait is ready to be generated.';
+        }
         catch (_) { window.location.assign('/login'); }
       }
       document.querySelector('#profile-form').addEventListener('submit', async (event) => {

@@ -117,6 +117,59 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(roadmap.status_code, 200)
         self.assertIn(b"roadmap-page", roadmap.data)
 
+    def test_first_login_onboarding_redirect_and_page_are_available(self) -> None:
+        """New users should be redirected to the onboarding flow and see the questionnaire."""
+        new_email = f"onboard-{uuid4().hex[:8]}@example.com"
+        new_password = "test-pass-1234"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        uuid4().hex[:12],
+                        new_email,
+                        bcrypt.hashpw(
+                            new_password.encode("utf-8"),
+                            bcrypt.gensalt(),
+                        ).decode("utf-8"),
+                    ),
+                )
+                user_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO user_profiles (user_id, display_name) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
+                    (user_id, "New User"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        login_response = self.client.post(
+            "/api/login",
+            json={"email": new_email, "password": new_password},
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.get_json()["data"]["redirect"], "/onboarding")
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = user_id
+
+        onboarding_response = self.client.get("/onboarding")
+        self.assertEqual(onboarding_response.status_code, 200)
+        self.assertIn(b"favoriteAnimal", onboarding_response.data)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_careers_come_from_the_database(self) -> None:
         response = self.client.get("/api/careers")
         payload = response.get_json()

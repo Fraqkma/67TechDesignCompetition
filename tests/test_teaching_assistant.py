@@ -133,6 +133,60 @@ class TeachingAssistantTests(unittest.TestCase):
         request_object = mocked_urlopen.call_args.args[0]
         self.assertEqual(request_object.get_header("Authorization"), "Bearer test-key")
 
+    def test_profile_prompt_uses_onboarding_answers_and_achievements(self):
+        prompt = AIService.build_profile_prompt(
+            {
+                "favoriteAnimal": "cat",
+                "favoriteColor": "sky blue",
+                "favoriteSeason": "rainy",
+            },
+            ["First Step", "Code Novice"],
+        )
+
+        self.assertIn("cat", prompt.lower())
+        self.assertIn("sky blue", prompt.lower())
+        self.assertIn("rainy", prompt.lower())
+        self.assertIn("First Step", prompt)
+        self.assertIn("Code Novice", prompt)
+
+    def test_profile_fallback_image_is_svg_bytes(self):
+        image_bytes = AIService.generate_profile_fallback_image(
+            {
+                "favoriteAnimal": "cat",
+                "favoriteColor": "sky blue",
+                "favoriteSeason": "rainy",
+            },
+            ["First Step"],
+        )
+
+        self.assertTrue(image_bytes.startswith(b"<svg"))
+        self.assertIn(b"cat", image_bytes.lower())
+
+    @patch("backend.ai_service.request.urlopen")
+    def test_profile_image_generation_uses_openai_image_endpoint(self, mocked_urlopen):
+        mocked_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAF"}]}'
+        )
+
+        with patch.dict(
+            "os.environ",
+            {"AI_API_KEY": "test-key", "AI_IMAGE_MODEL": "gpt-image-1"},
+            clear=False,
+        ):
+            image_bytes = AIService.generate_profile_image(
+                {
+                    "favoriteAnimal": "cat",
+                    "favoriteColor": "sky blue",
+                    "favoriteSeason": "rainy",
+                },
+                ["First Step"],
+            )
+
+        self.assertTrue(image_bytes.startswith(b"\x89PNG"))
+        request_object = mocked_urlopen.call_args.args[0]
+        self.assertIn("/images/generations", request_object.full_url)
+        self.assertEqual(request_object.get_header("Authorization"), "Bearer test-key")
+
 
 if __name__ == "__main__":
     unittest.main()
