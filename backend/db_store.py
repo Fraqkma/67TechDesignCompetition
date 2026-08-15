@@ -24,6 +24,7 @@ live in ``study_buddy_store.SOCIAL_SCHEMA_STATEMENTS``) on a fresh database.
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from collections import defaultdict
@@ -337,7 +338,38 @@ SCHEMA_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_study_group_messages_group_created
     ON study_group_messages (group_id, created_at DESC)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_world_chat_messages_created
+    ON world_chat_messages (created_at DESC, id DESC)
+    """,
 ]
+
+
+def profile_image_data_url(image: Any) -> str | None:
+    """Convert a stored profile image into the data URL used by every UI."""
+
+    if image is None:
+        return None
+    data = bytes(image)
+    if not data:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime_type = "image/png"
+    elif data.startswith((b"\xff\xd8\xff",)):
+        mime_type = "image/jpeg"
+    elif data.startswith((b"GIF87a", b"GIF89a")):
+        mime_type = "image/gif"
+    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        mime_type = "image/webp"
+    elif data.lstrip().startswith(b"<svg"):
+        # Legacy deterministic fallbacks are not the learner's generated
+        # portrait. Social surfaces should show their normal initials fallback
+        # just like the main profile page does.
+        return None
+    else:
+        mime_type = "image/png"
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 # =========================================================

@@ -274,14 +274,18 @@ def create_app(database_path: str | None = None) -> Flask:
     def logged_in_user_id() -> int | None:
         """Return the authenticated user id without trusting request data."""
         user_id = session.get("user_id")
-        if user_id is None:
+        if isinstance(user_id, bool):
             return None
-        try:
+        if isinstance(user_id, int):
+            normalized_user_id = user_id
+        if isinstance(user_id, str) and user_id.isdigit():
             normalized_user_id = int(user_id)
-            session["user_id"] = normalized_user_id
-            return normalized_user_id
-        except (TypeError, ValueError):
+        elif not isinstance(user_id, int):
             return None
+        if normalized_user_id <= 0:
+            return None
+        session["user_id"] = normalized_user_id
+        return normalized_user_id
 
     def resolve_career_id(
         career_param: str | None,
@@ -645,6 +649,8 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             conn = get_db()
+            db_store.ensure_schema(conn)
+            conn.commit()
             cur = conn.cursor()
 
             cur.execute(
@@ -738,14 +744,7 @@ def create_app(database_path: str | None = None) -> Flask:
     def current_user():
         """Return currently logged-in user and profile."""
 
-        user_id = session.get("user_id")
-        if user_id is not None:
-            try:
-                user_id = int(user_id)
-                session["user_id"] = user_id
-            except (TypeError, ValueError):
-                session.clear()
-                return error("ยังไม่ได้ Login", 401)
+        user_id = logged_in_user_id()
 
         if user_id is None:
             return error(
@@ -758,6 +757,8 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             conn = get_db()
+            db_store.ensure_schema(conn)
+            conn.commit()
             cur = conn.cursor()
 
             cur.execute(

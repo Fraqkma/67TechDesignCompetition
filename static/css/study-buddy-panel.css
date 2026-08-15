@@ -125,6 +125,14 @@
   background: rgba(115, 229, 193, 0.08);
   font-size: 10px;
   font-weight: 850;
+  overflow: hidden;
+}
+
+.buddy-match-avatar .profile-avatar {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .buddy-match-copy {
@@ -196,6 +204,14 @@
   color: var(--accent);
   font-weight: 750;
   text-decoration: none;
+}
+
+button.buddy-empty-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: 750 10px/1.55 inherit;
 }
 
 .buddy-panel-footer {

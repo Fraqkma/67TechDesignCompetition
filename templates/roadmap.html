@@ -44,14 +44,24 @@
         </a>
 
         <div class="topbar-actions">
-          <a
-            class="button primary buddy-nav-button"
-            href="/study-buddy#friends"
-            aria-label="เพิ่มเพื่อนและจัดการคำขอเป็นเพื่อน"
-          >
-            <span class="buddy-nav-icon" aria-hidden="true">＋</span>
-            <span class="buddy-nav-label">Add Friend</span>
-          </a>
+          <nav class="social-menu-actions" aria-label="Social menu">
+            <a
+              class="button primary buddy-nav-button social-menu-button friend-hub-button"
+              href="/study-buddy#friends"
+              aria-label="เปิด Friend Hub และจัดการคำขอเป็นเพื่อน"
+            >
+              <span class="buddy-nav-icon" aria-hidden="true">＋</span>
+              <span class="buddy-nav-label">Friend Hub</span>
+            </a>
+            <a
+              class="button ghost buddy-nav-button social-menu-button global-chat-button"
+              href="/study-buddy#global-chat"
+              aria-label="เปิด Global Chat"
+            >
+              <span class="buddy-nav-icon global-chat-icon" aria-hidden="true">◌</span>
+              <span class="buddy-nav-label">Global Chat</span>
+            </a>
+          </nav>
           <span class="topbar-user" id="topbar-user" hidden>
             <a class="profile-chip" href="/profile">
               <img class="avatar-icon profile-avatar-image" id="user-profile-image" alt="" hidden />

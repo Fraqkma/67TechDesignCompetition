@@ -15,12 +15,12 @@
 ตารางทั้งหมด 29 ตาราง แบ่งตามสถานะการใช้งานโดยโค้ด (app.py + backend/) เป็น
 4 กลุ่ม:
 
-  A) ตารางที่โค้ดใช้งานจริง (ACTIVE) .......... 19 ตาราง
+  A) ตารางที่โค้ดใช้งานจริง (ACTIVE) .......... 20 ตาราง
   B) ตารางที่อ่านเพื่อคำนวณ Achievement ....... (นับรวมใน ACTIVE: friendships,
                                                 study_sessions ถูกอ่านใน
                                                 load_user_stats)
-  C) ตารางที่เพิ่มใหม่ (NEW) ................... 5 ตาราง (world chat + meme
-                                                module ยังไม่มีโค้ดใช้งาน)
+  C) ตารางที่เพิ่มใหม่ (NEW) ................... 4 ตาราง (meme module
+                                                ยังไม่มีโค้ดใช้งาน)
   D) ตารางที่ยังไม่มีโค้ดใช้งาน (UNUSED) ....... 4 ตาราง (legacy design)
   E) ตาราง legacy ที่แนะนำให้ลบ/ย้ายข้อมูล .... 1 ตาราง (user_skill_progress)
 
@@ -44,7 +44,7 @@ study_buddy_store.SOCIAL_SCHEMA_STATEMENTS) ดังนั้น ensure_schema(
  subjects                 | ACTIVE     | db_store (load_database)            | 1
  career_nodes             | ACTIVE     | db_store (load_database)            | 53
  node_prerequisites       | ACTIVE     | db_store (load_database)            | 43
- achievements             | ACTIVE     | db_store (achievements)             | 4
+ achievements             | ACTIVE     | db_store (achievements)             | 9
  user_achievements        | ACTIVE     | db_store (achievements)             | 14
  ranks                    | ACTIVE     | db_store (load_rank)                | 5
  friendships              | ACTIVE     | study_buddy_store + achievement     | 7
@@ -54,7 +54,7 @@ study_buddy_store.SOCIAL_SCHEMA_STATEMENTS) ดังนั้น ensure_schema(
  study_group_messages     | ACTIVE     | study_buddy_store (group chat)      | 9
  buddy_notifications      | ACTIVE     | study_buddy_store (notifications)   | 28
  study_path_shares        | ACTIVE     | study_buddy_store (path share)      | 4
- world_chat_messages      | NEW        | - (ยังไม่มีโค้ด)                     | 0
+ world_chat_messages      | ACTIVE     | study_buddy_store + social routes   | 0
  meme_questions           | NEW        | - (ยังไม่มีโค้ด)                     | 0
  user_meme_answers        | NEW        | - (ยังไม่มีโค้ด)                     | 0
  study_frequency_memes    | NEW        | - (ยังไม่มีโค้ด)                     | 0
@@ -87,7 +87,7 @@ study_buddy_store.SOCIAL_SCHEMA_STATEMENTS) ดังนั้น ensure_schema(
 - users (1) <---> (N) study_path_shares      [ACTIVE]
 - users (1) <---> (N) study_sessions         [อ่านเพื่อนับ achievement]
 
-- users (1) <---> (N) world_chat_messages    [NEW — แชตโลก]
+- users (1) <---> (N) world_chat_messages    [ACTIVE — แชตโลก]
 - users (1) <---> (N) user_meme_answers      [NEW — คำตอบคำถามมีม]
 - meme_questions (1) <---> (N) user_meme_answers [NEW]
 - subjects (1) <---> (N) subject_memes       [NEW — มีมแทนวิชา]
@@ -198,7 +198,7 @@ study_buddy_store.SOCIAL_SCHEMA_STATEMENTS) ดังนั้น ensure_schema(
 --------------------------------------------------------------------------------
 
 [TABLE: achievements]
-คำอธิบาย: รายการตราความสำเร็จ (Badge) ทั้งหมด — seed อัตโนมัติ 4 รายการ
+คำอธิบาย: รายการตราความสำเร็จ (Badge) ทั้งหมด — 4 badge ทั่วไปและ 5 career tier
 คอลัมน์:
 - id (BIGSERIAL, PK)         : รหัสตรา
 - title (VARCHAR)            : ชื่อตรา (First Step, Code Novice, ...)
@@ -206,7 +206,8 @@ study_buddy_store.SOCIAL_SCHEMA_STATEMENTS) ดังนั้น ensure_schema(
 - icon_url (VARCHAR)         : ลิงก์รูปไอคอน
 - condition (TEXT)           : [ใหม่] เงื่อนไขปลดล็อกในรูป JSON
                               เช่น {"type": "exp", "target": 500}
-                              type ที่รองรับ: completed_skills | exp | friends | study_sessions
+- category (VARCHAR)         : ประเภท badge เช่น career_progress
+                              type ที่รองรับ: completed_skills | exp | friends | study_sessions | career_progress
 
 [TABLE: user_achievements]
 คำอธิบาย: บันทึกตราที่ผู้ใช้แต่ละคนปลดล็อกแล้ว
@@ -314,20 +315,21 @@ Host เพื่อปลดล็อกตรา "Study Buddy Host" (ยัง
 ดัชนี: idx_study_path_shares_receiver_created (receiver_user_id, created_at DESC)
 
 --------------------------------------------------------------------------------
-7. หมวดแชทโลกและมีม (WORLD CHAT & MEME MODULE) — NEW (เพิ่มใหม่, ยังไม่มีโค้ด)
+7. หมวดแชทโลกและมีม (WORLD CHAT & MEME MODULE) — WORLD CHAT ACTIVE / MEME NEW
 --------------------------------------------------------------------------------
 
-ตารางกลุ่มนี้เพิ่งถูกสร้าง (DDL อยู่ใน SCHEMA_STATEMENTS ของ db_store.py) สำหรับ
-ฟีเจอร์ "แชทโลก" และ "ถามคำถาม 3 ข้อเพื่อแปลงเป็นรูปมีม" ยังไม่มีโค้ดอ่าน/เขียน
-และยังไม่มีข้อมูลในตาราง (0 แถว) — สร้าง schema ไว้รอทีม feature ต่อยอด
+DDL ของตารางกลุ่มนี้อยู่ใน SCHEMA_STATEMENTS ของ db_store.py โดย Global Chat
+มี API และ UI อ่าน/เขียนจริงแล้ว ส่วนตาราง meme ยังเป็น schema สำหรับทีม feature ต่อยอด
 
 [TABLE: world_chat_messages]
-คำอธิบาย: ข้อความแชทโลก (World Chat) — ข้อความ text อย่างเดียว (ตามตกลง)
+คำอธิบาย: ข้อความ Global Chat แบบ text สำหรับผู้ใช้ที่ Login แล้ว
 คอลัมน์:
 - id (BIGSERIAL, PK)           : รหัสข้อความ
 - user_id (BIGINT, FK)         : ผู้ส่ง (-> users.id / CASCADE)
 - content (TEXT)               : เนื้อหาข้อความ
 - created_at (TIMESTAMP)       : วันเวลาที่ส่ง
+หมายเหตุ: API join users และ user_profiles เพื่อส่งชื่อ UID และ profile_picture
+ของเจ้าของข้อความให้ UI render ด้วยรูปเดียวกับหน้า Profile
 
 [TABLE: meme_questions]
 คำอธิบาย: แคตตาล็อกคำถาม 3 ข้อที่ใช้ถามผู้ใช้ก่อนสร้างมีม (Master Data) —
@@ -453,6 +455,8 @@ skill_id เป็น string (เช่น 'programming_fundamentals', 'basic_al
 --------------------------------------------------------------------------------
 11. หมายเหตุการแก้ไขเอกสาร (CHANGELOG)
 --------------------------------------------------------------------------------
+- v5: เปิดใช้ Global Chat ผ่าน social routes และแสดงตัวตน/รูปโปรไฟล์ผู้ส่ง
+      แยกปุ่ม Friend Hub และ Global Chat ในเมนูหลัก
 - v4: เพิ่มคำตอบ onboarding (favorite_animal, favorite_color, gender),
       บันทึก prompt และรูป AI จริงลง user_profiles และ render รูปจาก BYTEA
       โดยจำกัดการสร้างรูปจริงหนึ่งครั้งต่อบัญชี

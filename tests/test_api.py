@@ -209,6 +209,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"favoriteAnimal", onboarding_response.data)
         self.assertIn(b'name="gender"', onboarding_response.data)
         self.assertNotIn(b"favoriteSeason", onboarding_response.data)
+        self.assertIn(b"window.location.href = '/select-track'", onboarding_response.data)
 
         conn = get_db()
         try:
@@ -379,6 +380,138 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(color)
         self.assertIsNone(gender)
         self.assertIsNone(picture)
+
+    def test_world_chat_persists_message_and_main_profile_identity(self) -> None:
+        profile_picture = b"\x89PNG\r\n\x1a\nworld-chat-profile"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE user_profiles
+                    SET display_name = %s, profile_picture = %s
+                    WHERE user_id = %s
+                    """,
+                    ("API Test User", profile_picture, self.user_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        sent = self.client.post(
+            "/api/social/world-chat/messages",
+            json={"content": "Hello global learners"},
+        )
+        self.assertEqual(sent.status_code, 201)
+        sent_message = sent.get_json()["data"]
+        self.assertEqual(sent_message["sender"]["displayName"], "API Test User")
+        self.assertTrue(
+            sent_message["sender"]["profileImage"].startswith(
+                "data:image/png;base64,"
+            )
+        )
+
+        loaded = self.client.get("/api/social/world-chat/messages")
+        self.assertEqual(loaded.status_code, 200)
+        message = next(
+            item
+            for item in loaded.get_json()["data"]["messages"]
+            if item["id"] == sent_message["id"]
+        )
+        self.assertEqual(message["content"], "Hello global learners")
+        self.assertEqual(message["sender"], sent_message["sender"])
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT user_id, content FROM world_chat_messages WHERE id = %s",
+                    (sent_message["id"],),
+                )
+                stored_user_id, stored_content = cur.fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(stored_user_id, self.user_id)
+        self.assertEqual(stored_content, "Hello global learners")
+
+    def test_social_dashboard_accepts_numeric_string_session_user_id(self) -> None:
+        with self.client.session_transaction() as browser_session:
+            browser_session["user_id"] = str(self.user_id)
+
+        response = self.client.get("/api/social/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["me"]["id"], self.user_id)
+
+    def test_friend_and_match_use_the_main_profile_picture(self) -> None:
+        my_picture = b"\x89PNG\r\n\x1a\nfriend-owner-profile"
+        buddy_picture = b"\x89PNG\r\n\x1a\nfriend-buddy-profile"
+        buddy_uid = uuid4().hex[:12]
+        buddy_email = f"buddy-{uuid4().hex[:8]}@example.com"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE user_profiles SET profile_picture = %s WHERE user_id = %s",
+                    (my_picture, self.user_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        buddy_uid,
+                        buddy_email,
+                        bcrypt.hashpw(
+                            b"buddy-pass-1234", bcrypt.gensalt()
+                        ).decode("utf-8"),
+                    ),
+                )
+                buddy_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, display_name, profile_picture)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        display_name = EXCLUDED.display_name,
+                        profile_picture = EXCLUDED.profile_picture
+                    """,
+                    (buddy_id, "Profile Buddy", buddy_picture),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO friendships (user_id, friend_id, status)
+                    VALUES (%s, %s, 'accepted')
+                    """,
+                    (self.user_id, buddy_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        def cleanup_buddy() -> None:
+            cleanup_conn = get_db()
+            try:
+                with cleanup_conn.cursor() as cur:
+                    cur.execute("DELETE FROM users WHERE id = %s", (buddy_id,))
+                cleanup_conn.commit()
+            finally:
+                cleanup_conn.close()
+
+        self.addCleanup(cleanup_buddy)
+
+        dashboard = self.client.get("/api/social/dashboard")
+        self.assertEqual(dashboard.status_code, 200)
+        data = dashboard.get_json()["data"]
+        friend = next(item for item in data["friends"] if item["id"] == buddy_id)
+        match = next(item for item in data["matches"] if item["id"] == buddy_id)
+        main_profile = self.client.get("/api/me").get_json()["data"]
+
+        self.assertTrue(friend["profileImage"].startswith("data:image/png;base64,"))
+        self.assertEqual(match["profileImage"], friend["profileImage"])
+        self.assertEqual(data["me"]["profileImage"], main_profile["profileImage"])
 
     def test_careers_come_from_the_database(self) -> None:
         response = self.client.get("/api/careers")
