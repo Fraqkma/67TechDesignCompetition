@@ -377,8 +377,13 @@ function renderAchievements() {
 
   elements.achievementGrid.innerHTML = achievements
     .map((achievement) => {
-      const icon = achievement.iconUrl
-        ? `<img class="achievement-img" src="${escapeHtml(achievement.iconUrl)}" alt="" loading="lazy">`
+      // Keep the God badge visual available while an already-running server
+      // still returns catalog data created before the icon URL was seeded.
+      const iconUrl = achievement.iconUrl || (
+        achievement.name === "God" ? "/pignopic/god.png" : ""
+      );
+      const icon = iconUrl
+        ? `<img class="achievement-img" src="${escapeHtml(iconUrl)}" alt="" loading="lazy">`
         : `<span class="achievement-icon">🎖</span>`;
       return `
         <div class="achievement-item ${achievement.unlocked ? "unlocked" : ""}"

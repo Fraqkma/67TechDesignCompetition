@@ -190,8 +190,11 @@
           career.textContent = `Career: ${highest.career.title}`;
           career.href = `/roadmap?career=${encodeURIComponent(highest.career.id)}`;
           progress.textContent = `${highest.progress}% career progress · Tier unlocks at ${highest.achievement.target}%`;
-          if (highest.achievement.iconUrl) {
-            image.src = highest.achievement.iconUrl;
+          const iconUrl = highest.achievement.iconUrl || (
+            highest.achievement.name === 'God' ? '/pignopic/god.png' : ''
+          );
+          if (iconUrl) {
+            image.src = iconUrl;
             image.hidden = false;
             fallback.hidden = true;
             image.onerror = () => {
