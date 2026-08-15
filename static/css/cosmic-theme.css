@@ -165,9 +165,9 @@ body {
 
 .avatar-icon {
   flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 4px;
+  width: 34px;
+  height: 34px;
+  padding: 5px;
   border-radius: 50%;
   border: 1px solid var(--border-strong);
   color: var(--text-muted);
@@ -464,8 +464,8 @@ body {
     linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px), rgba(18, 15, 30, 0.65);
 }
 
-.login-page .graph-line {
-  background: rgba(82, 214, 232, 0.28);
+.login-page .graph-connector-line {
+  stroke: rgba(82, 214, 232, 0.3);
 }
 
 .login-page .graph-node {
