@@ -108,7 +108,9 @@
       <section class="tier-card" aria-labelledby="highest-tier-label">
         <div class="tier-emblem" aria-hidden="true">
           <img id="highest-tier-image" alt="" hidden />
-          <span id="highest-tier-fallback">🏆</span>
+          <span id="highest-tier-fallback">
+            <img src="/pignopic/god.png" alt="God achievement" style="width: 100%; height: 100%; object-fit: contain; padding: 8px;" />
+          </span>
         </div>
         <div>
           <div class="portrait-label" id="highest-tier-label">Highest Career Tier</div>
@@ -190,9 +192,9 @@
           career.textContent = `Career: ${highest.career.title}`;
           career.href = `/roadmap?career=${encodeURIComponent(highest.career.id)}`;
           progress.textContent = `${highest.progress}% career progress · Tier unlocks at ${highest.achievement.target}%`;
-          const iconUrl = highest.achievement.iconUrl || (
-            highest.achievement.name === 'God' ? '/pignopic/god.png' : ''
-          );
+          const iconUrl = highest.achievement.name === 'God'
+            ? '/pignopic/god.png'
+            : highest.achievement.iconUrl;
           if (iconUrl) {
             image.src = iconUrl;
             image.hidden = false;
