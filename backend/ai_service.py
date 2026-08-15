@@ -18,6 +18,34 @@ from backend.graph_engine import GraphEngine
 class AIService:
     """Small OpenAI-compatible helper for graph-aware AI features."""
 
+    MAX_HISTORY_MESSAGES = 12
+    MAX_MESSAGE_LENGTH = 2_000
+
+    @staticmethod
+    def _clean_history(history: list[dict[str, str]] | None) -> list[dict[str, str]]:
+        """Keep only the most recent valid user/assistant turns."""
+        if history is None:
+            return []
+        if not isinstance(history, list):
+            raise ValueError("history must be a list")
+
+        clean: list[dict[str, str]] = []
+        for item in history[-AIService.MAX_HISTORY_MESSAGES:]:
+            if not isinstance(item, dict):
+                raise ValueError("Each history item must be an object")
+            role, content = item.get("role"), item.get("content")
+            if role not in {"user", "assistant"}:
+                raise ValueError("History roles must be user or assistant")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("History content must be a non-empty string")
+            clean.append(
+                {
+                    "role": role,
+                    "content": content.strip()[: AIService.MAX_MESSAGE_LENGTH],
+                }
+            )
+        return clean
+
     @staticmethod
     def _resolve_model() -> str:
         model = os.getenv("AI_MODEL", "").strip()
@@ -218,16 +246,15 @@ class AIService:
         return payload
 
     @staticmethod
-    def _build_prompt(
-        message: str,
+    def _build_graph_context_text(
         engine: GraphEngine,
         completed_ids: set[str],
     ) -> str:
-        progress = engine.calculate_progress(completed_ids)
-        roadmap = json.dumps(
+        """Render the skill graph as JSON for the general chat prompt."""
+        return json.dumps(
             {
                 "career": engine.career,
-                "progress": progress,
+                "progress": engine.calculate_progress(completed_ids),
                 "subjects": engine.subjects,
                 "availableSkills": [
                     {
@@ -246,36 +273,52 @@ class AIService:
             indent=2,
         )
 
-        return (
-            "You are a learning roadmap assistant for a skill graph. "
-            "Use only the graph data provided below. "
-            "Do not invent new prerequisites or skills. "
-            "Answer in Thai unless the user asks in English. "
-            "Be concise but clear.\n\n"
-            f"Graph context:\n{roadmap}\n\nUser question:\n{message}"
-        )
-
     @staticmethod
     def ask_chat(
         message: str,
         engine: GraphEngine,
         completed_ids: set[str],
         api_key: str,
+        history: list[dict[str, str]] | None = None,
+        focus: dict[str, Any] | None = None,
     ) -> str:
-        return AIService._request_completion(
-            [
+        """Answer any learning question, grounded in the graph as source of truth.
+
+        When ``focus`` is provided (the learner clicked a skill node), the model
+        anchors its answer on that skill while still treating the graph as the
+        source of truth for prerequisites.
+        """
+
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "คุณเป็น AI ที่ช่วยวิเคราะห์ Learning Skill Tree และตอบคำถามที่เกี่ยวกับ "
+                    "การเรียนรู้ของผู้ใช้ การเลือก skill และแผนการเรียนต่อไป "
+                    "อย่าคิดค้นหรือเพิ่ม prerequisite ที่ไม่ได้อยู่ใน graph"
+                ),
+            },
+            {
+                "role": "system",
+                "content": (
+                    "Skill Tree context (source of truth):\n"
+                    f"{AIService._build_graph_context_text(engine, completed_ids)}"
+                ),
+            },
+        ]
+        if focus:
+            messages.append(
                 {
                     "role": "system",
                     "content": (
-                        "คุณเป็น AI ที่ช่วยวิเคราะห์ Learning Skill Tree และตอบคำถามที่เกี่ยวกับ "
-                        "การเรียนรู้ของผู้ใช้ การเลือก skill และแผนการเรียนต่อไป "
-                        "อย่าคิดค้นหรือเพิ่ม prerequisite ที่ไม่ได้อยู่ใน graph"
+                        "The learner selected a skill to focus on. Anchor your "
+                        "answer on this skill and its data below; still treat the "
+                        "skill graph as the source of truth for prerequisites.\n"
+                        "Focused skill:\n"
+                        f"{json.dumps(focus, ensure_ascii=False, indent=2)}"
                     ),
-                },
-                {
-                    "role": "user",
-                    "content": AIService._build_prompt(message, engine, completed_ids),
-                },
-            ],
-            api_key,
-        )
+                }
+            )
+        messages.extend(AIService._clean_history(history))
+        messages.append({"role": "user", "content": message})
+        return AIService._request_completion(messages, api_key)

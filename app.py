@@ -1297,6 +1297,15 @@ def create_app(database_path: str | None = None) -> Flask:
 
         message = body.get("message")
 
+        history = body.get(
+            "history",
+            [],
+        )
+
+        target_skill_id = body.get(
+            "targetSkillId"
+        )
+
         api_key = (
             body.get("apiKey")
             or AIService.resolve_api_key()
@@ -1311,6 +1320,22 @@ def create_app(database_path: str | None = None) -> Flask:
         ):
             return error(
                 "Message must be a non-empty string"
+            )
+
+        if not isinstance(history, list):
+            return error(
+                "history must be a list"
+            )
+
+        if target_skill_id is not None and (
+            not isinstance(
+                target_skill_id,
+                str,
+            )
+            or not target_skill_id
+        ):
+            return error(
+                "targetSkillId must be a non-empty string when provided"
             )
 
         if not api_key:
@@ -1330,13 +1355,48 @@ def create_app(database_path: str | None = None) -> Flask:
                 if user_id is not None
                 else set()
             )
-            analysis = AIAnalyzer.analyze(engine, completed)
+            if (
+                target_skill_id is not None
+                and target_skill_id
+                not in engine.skill_by_id
+            ):
+                return error(
+                    "Target skill not found",
+                    404,
+                    target_skill_id,
+                )
+
+            analysis = AIAnalyzer.analyze(
+                engine,
+                completed,
+                target_skill_id=target_skill_id,
+            )
+
+            focus = None
+            if target_skill_id is not None:
+                focus = {
+                    "focusedSkill": AIAnalyzer.focus_context(
+                        engine,
+                        completed,
+                        target_skill_id,
+                    ),
+                    "reason": analysis["reason"],
+                    "pathToSkill": [
+                        {
+                            "id": step["id"],
+                            "name": step["name"],
+                        }
+                        for step in analysis["recommendedPath"]
+                    ],
+                }
 
             answer = AIService.ask_chat(
                 message,
                 engine,
                 completed,
                 api_key,
+                history=history,
+                focus=focus,
             )
 
             return success(
@@ -1344,6 +1404,7 @@ def create_app(database_path: str | None = None) -> Flask:
                     "answer": answer,
                     "recommendedSkill": analysis["nextSkill"],
                     "reason": analysis["reason"],
+                    "focusedSkill": focus["focusedSkill"] if focus else None,
                 },
                 "AI response generated",
             )
@@ -1351,9 +1412,8 @@ def create_app(database_path: str | None = None) -> Flask:
         except ValueError as exc:
 
             return error(
-                "AI API key is required",
-                400,
                 str(exc),
+                400,
             )
 
         except RuntimeError as exc:

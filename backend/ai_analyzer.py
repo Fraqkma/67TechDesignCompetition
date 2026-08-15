@@ -40,6 +40,25 @@ class AIAnalyzer:
         }
 
     @staticmethod
+    def focus_context(
+        engine: GraphEngine,
+        completed: Iterable[str],
+        target_skill_id: str,
+    ) -> dict[str, Any]:
+        """Full teaching context for a skill node the learner clicked."""
+        if target_skill_id not in engine.skill_by_id:
+            raise KeyError(target_skill_id)
+        skill = engine.skill_by_id[target_skill_id]
+        cleaned = engine.clean_completed(completed)
+        return {
+            **AIAnalyzer._skill_context(skill),
+            "status": engine.calculate_statuses(cleaned)[target_skill_id],
+            "missingPrerequisiteIds": engine.missing_prerequisites(
+                target_skill_id, cleaned
+            ),
+        }
+
+    @staticmethod
     def _teaching_prompt(
         skill: dict[str, Any],
         direct_prerequisites: list[dict[str, Any]],

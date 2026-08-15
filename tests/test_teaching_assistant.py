@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend.teaching_assistant import TeachingAssistant
 from backend.ai_service import AIService
@@ -46,6 +46,77 @@ class TeachingAssistantTests(unittest.TestCase):
         self.assertIn(ANALYSIS["teachingPrompt"], messages[1]["content"])
         self.assertEqual(messages[2], {"role": "user", "content": "What is algebra?"})
         self.assertEqual(messages[-1], {"role": "user", "content": "Give me an example"})
+
+    @patch("backend.ai_service.AIService._request_completion", return_value="answer")
+    def test_ask_chat_includes_graph_context_and_history(self, mocked):
+        engine = Mock()
+        engine.career = {"name": "Software Engineer"}
+        engine.subjects = []
+        engine.skill_by_id = {}
+        engine.topological_order = []
+        engine.calculate_progress.return_value = {"percent": 0}
+        engine.calculate_statuses.return_value = {}
+
+        AIService.ask_chat(
+            "แล้ว skill ถัดไปคืออะไร",
+            engine,
+            set(),
+            "test-key",
+            history=[{"role": "user", "content": "ช่วยอธิบาย roadmap หน่อย"}],
+        )
+
+        messages = mocked.call_args.args[0]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("Skill Tree context", messages[1]["content"])
+        self.assertEqual(
+            messages[2],
+            {"role": "user", "content": "ช่วยอธิบาย roadmap หน่อย"},
+        )
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertEqual(messages[-1]["content"], "แล้ว skill ถัดไปคืออะไร")
+
+    def test_ask_chat_rejects_non_list_history(self) -> None:
+        engine = Mock()
+        engine.career = {"name": "Software Engineer"}
+        engine.subjects = []
+        engine.skill_by_id = {}
+        engine.topological_order = []
+        engine.calculate_progress.return_value = {"percent": 0}
+        engine.calculate_statuses.return_value = {}
+        with self.assertRaises(ValueError):
+            AIService.ask_chat(
+                "สวัสดี",
+                engine,
+                set(),
+                "test-key",
+                history="not-a-list",
+            )
+
+    @patch("backend.ai_service.AIService._request_completion", return_value="answer")
+    def test_ask_chat_includes_focus_context(self, mocked):
+        engine = Mock()
+        engine.career = {"name": "Software Engineer"}
+        engine.subjects = []
+        engine.skill_by_id = {}
+        engine.topological_order = []
+        engine.calculate_progress.return_value = {"percent": 0}
+        engine.calculate_statuses.return_value = {}
+
+        AIService.ask_chat(
+            "ช่วยอธิบาย skill นี้",
+            engine,
+            set(),
+            "test-key",
+            focus={"focusedSkill": {"id": "sql", "name": "SQL"}},
+        )
+
+        messages = mocked.call_args.args[0]
+        focus_message = next(
+            message
+            for message in messages
+            if "Focused skill" in message["content"]
+        )
+        self.assertIn("SQL", focus_message["content"])
 
     @patch("backend.ai_service.request.urlopen")
     def test_provider_request_uses_bearer_authorization(self, mocked_urlopen):
