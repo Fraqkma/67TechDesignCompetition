@@ -531,22 +531,7 @@ def seed_ranks(conn) -> None:
 
 
 SCHEMA_LOCK = threading.RLock()
-
-
-def ensure_schema(conn) -> None:
-    """Create every table used by the app (idempotent).
-
-    PostgreSQL DDL acquires table locks, so schema bootstrapping is serialized
-    across requests to avoid deadlocks when multiple endpoints initialize the
-    database concurrently during startup or first-login flows.
-    """
-    with SCHEMA_LOCK:
-        with conn.cursor() as cur:
-            for statement in SCHEMA_STATEMENTS:
-                cur.execute(statement)
-        seed_achievements(conn)
-        seed_subjects_and_nodes(conn)
-        seed_ranks(conn)
+_schema_initialized = False
 # =========================================================
 # Meme questions (catalog seed)
 # =========================================================
@@ -575,38 +560,52 @@ def seed_meme_questions(conn) -> None:
 
 
 def ensure_schema(conn) -> None:
-    """Create every table used by the app (idempotent)."""
-    with conn.cursor() as cur:
-        for statement in SCHEMA_STATEMENTS:
-            cur.execute(statement)
-    seed_achievements(conn)
-    with conn.cursor() as cur:
-        # Legacy rows did not identify a career.  They can safely belong only
-        # to the learner's current career, never to every career sharing a node.
-        cur.execute(
-            """
-            INSERT INTO user_career_node_progress
-                (user_id, career_id, node_id, status, completed_at)
-            SELECT p.user_id, p.current_career_id, old.node_id, old.status, old.completed_at
-            FROM user_node_progress old
-            JOIN user_profiles p ON p.user_id = old.user_id
-            WHERE p.current_career_id IS NOT NULL
-            ON CONFLICT (user_id, career_id, node_id) DO NOTHING
-            """
-        )
-        # The old table has no career dimension.  Leaving rows there would
-        # re-import cleared progress on every request, so the migration is a
-        # move, not a copy.
-        cur.execute(
-            """
-            DELETE FROM user_node_progress old
-            USING user_profiles p
-            WHERE p.user_id = old.user_id AND p.current_career_id IS NOT NULL
-            """
-        )
-    seed_subjects_and_nodes(conn)
-    seed_ranks(conn)
-    seed_meme_questions(conn)
+    """Create every table used by the app (idempotent, once per process).
+
+    The previous version re-ran dozens of DDL statements plus the legacy
+    progress migration and catalog seeds on *every* request, so every API call
+    paid for schema bootstrapping.  After the first successful run in this
+    process the expensive work is skipped and the call becomes a no-op.
+    PostgreSQL DDL acquires table locks, so bootstrapping stays serialized via
+    ``SCHEMA_LOCK`` to avoid deadlocks when concurrent requests initialize the
+    database during startup or first-login flows.
+    """
+    global _schema_initialized
+    with SCHEMA_LOCK:
+        if _schema_initialized:
+            return
+        with conn.cursor() as cur:
+            for statement in SCHEMA_STATEMENTS:
+                cur.execute(statement)
+        seed_achievements(conn)
+        with conn.cursor() as cur:
+            # Legacy rows did not identify a career.  They can safely belong only
+            # to the learner's current career, never to every career sharing a node.
+            cur.execute(
+                """
+                INSERT INTO user_career_node_progress
+                    (user_id, career_id, node_id, status, completed_at)
+                SELECT p.user_id, p.current_career_id, old.node_id, old.status, old.completed_at
+                FROM user_node_progress old
+                JOIN user_profiles p ON p.user_id = old.user_id
+                WHERE p.current_career_id IS NOT NULL
+                ON CONFLICT (user_id, career_id, node_id) DO NOTHING
+                """
+            )
+            # The old table has no career dimension.  Leaving rows there would
+            # re-import cleared progress on every request, so the migration is a
+            # move, not a copy.
+            cur.execute(
+                """
+                DELETE FROM user_node_progress old
+                USING user_profiles p
+                WHERE p.user_id = old.user_id AND p.current_career_id IS NOT NULL
+                """
+            )
+        seed_subjects_and_nodes(conn)
+        seed_ranks(conn)
+        seed_meme_questions(conn)
+        _schema_initialized = True
 
 
 # =========================================================

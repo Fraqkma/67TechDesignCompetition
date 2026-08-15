@@ -15,7 +15,9 @@
       if (!body || !body.ok) return;
       if (nameEl) nameEl.textContent = body.data.displayName || body.data.email || "";
       if (profileImage && body.data.profileImage && body.data.profileImageGenerated) {
-        profileImage.src = body.data.profileImage;
+        // Serve the portrait from its own cacheable endpoint instead of the
+        // base64 data URL, so the browser reuses it across page loads.
+        profileImage.src = "/api/profile/avatar";
         profileImage.hidden = false;
         if (fallbackIcon) fallbackIcon.hidden = true;
       }
