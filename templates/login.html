@@ -165,6 +165,10 @@
       margin-bottom: 55px;
     }
 
+    .hero .topbar-start {
+      align-items: flex-start;
+    }
+
     .eyebrow {
       margin-bottom: 12px;
 
@@ -1032,9 +1036,8 @@
 
 
           // Login สำเร็จ
-
-          window.location.href =
-            "/roadmap";
+          const redirectPath = result?.data?.redirect || "/roadmap";
+          window.location.href = redirectPath;
 
         }
 

@@ -41,7 +41,14 @@ def create_study_buddy_blueprint(
 
     def current_user_id() -> int | None:
         user_id = session.get("user_id")
-        return user_id if isinstance(user_id, int) else None
+        if isinstance(user_id, bool):
+            return None
+        if isinstance(user_id, int):
+            return user_id if user_id > 0 else None
+        if isinstance(user_id, str) and user_id.isdigit():
+            parsed = int(user_id)
+            return parsed if parsed > 0 else None
+        return None
 
     def require_user_id() -> int:
         user_id = current_user_id()
@@ -50,12 +57,15 @@ def create_study_buddy_blueprint(
         return user_id
 
     def ensure_tables(conn) -> None:
+        # All DDL (including the social tables) is consolidated in
+        # db_store.SCHEMA_STATEMENTS so a single call creates everything.
         db_store.ensure_schema(conn)
-        social_store.ensure_social_schema(conn)
 
-    def load_completed(conn, user_id: int, engine: GraphEngine) -> set[str]:
+    def load_completed(
+        conn, user_id: int, career_id: int, engine: GraphEngine
+    ) -> set[str]:
         return engine.clean_completed(
-            db_store.load_completed_node_ids(conn, user_id)
+            db_store.load_completed_node_ids(conn, user_id, career_id)
         )
 
     def load_user_graph(conn, user_id: int):
@@ -66,7 +76,7 @@ def create_study_buddy_blueprint(
             raise GraphValidationError("No careers are configured")
         database = db_store.load_database(conn, career_id)
         engine = GraphEngine(database)
-        completed = load_completed(conn, user_id, engine)
+        completed = load_completed(conn, user_id, career_id, engine)
         return str(career_id), engine, completed
 
     def enrich_group(group: dict[str, Any], engine: GraphEngine):
@@ -105,7 +115,12 @@ def create_study_buddy_blueprint(
                 for friend in friends:
                     friend["currentCareerId"] = career_id
                     friend["careerName"] = engine.career["name"]
-                    friend_completed = load_completed(conn, friend["id"], engine)
+                    friend_completed = load_completed(
+                        conn,
+                        friend["id"],
+                        int(career_id),
+                        engine,
+                    )
                     matches.append(
                         build_buddy_match(
                             engine, completed, friend_completed, friend
@@ -616,6 +631,7 @@ def create_study_buddy_blueprint(
                     "id": user_id,
                     "uid": actor["uid"],
                     "displayName": actor["displayName"],
+                    "profileImage": actor["profileImage"],
                 }
                 recipients = social_store.list_group_member_ids(
                     conn, group_id
@@ -644,6 +660,67 @@ def create_study_buddy_blueprint(
             return error(str(exc))
         except psycopg2.Error as exc:
             return error("Could not send group message", 500, str(exc))
+
+    @blueprint.get("/api/social/world-chat/messages")
+    def world_chat_messages():
+        try:
+            require_user_id()
+            conn = get_db()
+            try:
+                ensure_tables(conn)
+                messages = social_store.list_world_chat_messages(conn)
+                conn.commit()
+                return success({"messages": messages})
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        except PermissionError as exc:
+            return error(str(exc), 401)
+        except psycopg2.Error as exc:
+            return error("Could not load Global Chat", 500, str(exc))
+
+    @blueprint.post("/api/social/world-chat/messages")
+    def send_world_chat_message():
+        try:
+            user_id = require_user_id()
+            body = parse_json_object()
+            content = body.get("content")
+            if not isinstance(content, str) or not content.strip():
+                return error("content is required")
+            content = content.strip()
+            if len(content) > 1000:
+                return error("content must contain at most 1000 characters")
+
+            conn = get_db()
+            try:
+                ensure_tables(conn)
+                message = social_store.create_world_chat_message(
+                    conn,
+                    user_id,
+                    content,
+                )
+                actor = social_store.get_person(conn, user_id)
+                message["sender"] = {
+                    "id": user_id,
+                    "uid": actor["uid"],
+                    "displayName": actor["displayName"],
+                    "profileImage": actor["profileImage"],
+                }
+                conn.commit()
+                return success(message, "Message sent", 201)
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        except PermissionError as exc:
+            return error(str(exc), 401)
+        except ValueError as exc:
+            return error(str(exc))
+        except psycopg2.Error as exc:
+            return error("Could not send Global Chat message", 500, str(exc))
 
     @blueprint.post("/api/social/notifications/<int:notification_id>/read")
     def read_notification(notification_id: int):

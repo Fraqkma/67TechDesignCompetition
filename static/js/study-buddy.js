@@ -5,6 +5,7 @@ const state = {
   searchResults: [],
   activeGroupId: null,
   chatPollTimer: null,
+  worldChatPollTimer: null,
 };
 
 const elements = {
@@ -45,6 +46,11 @@ const elements = {
   searchQuery: document.querySelector("#search-query"),
   searchResults: document.querySelector("#search-results"),
   friendList: document.querySelector("#friend-list"),
+  worldChatMessages: document.querySelector("#world-chat-messages"),
+  worldChatForm: document.querySelector("#world-chat-form"),
+  worldChatInput: document.querySelector("#world-chat-input"),
+  worldChatSend: document.querySelector("#world-chat-send"),
+  worldChatStatus: document.querySelector("#world-chat-status"),
 };
 
 function escapeHtml(value) {
@@ -63,6 +69,13 @@ function initials(name) {
     .slice(0, 2)
     .map((word) => word[0]?.toUpperCase() || "")
     .join("") || "?";
+}
+
+function avatarContent(person) {
+  if (person?.profileImage) {
+    return `<img class="profile-avatar" src="${escapeHtml(person.profileImage)}" alt="" />`;
+  }
+  return escapeHtml(initials(person?.displayName));
 }
 
 function relativeTime(value) {
@@ -113,7 +126,7 @@ function empty(message) {
 function renderIdentity(data) {
   elements.myName.textContent = data.me.displayName;
   elements.myUid.textContent = data.me.uid;
-  elements.myAvatar.textContent = initials(data.me.displayName);
+  elements.myAvatar.innerHTML = avatarContent(data.me);
   elements.careerName.textContent = data.career.name;
   elements.friendCount.textContent = data.friends.length;
   elements.matchCount.textContent = data.matches.length;
@@ -160,7 +173,7 @@ function renderMatches(matches) {
       const reasons = [...shared, ...help].slice(0, 5).join("");
       return `
         <article class="match-card">
-          <div class="mini-avatar">${escapeHtml(initials(match.displayName))}</div>
+          <div class="mini-avatar">${avatarContent(match)}</div>
           <div>
             <h3 class="match-name">${escapeHtml(match.displayName)}</h3>
             <div class="match-meta">#${escapeHtml(match.uid)} · ระดับ ${escapeHtml(match.level)}</div>
@@ -183,7 +196,10 @@ function renderNotifications(notifications) {
     .map(
       (item) => `
         <article class="notification ${item.read ? "" : "unread"}">
-          <strong>${escapeHtml(item.title)}</strong>
+          <div class="notification-owner">
+            <span class="chat-avatar">${avatarContent(item.actor)}</span>
+            <strong>${escapeHtml(item.title)}</strong>
+          </div>
           <p>${escapeHtml(item.body)}</p>
           <footer>
             <span>${escapeHtml(relativeTime(item.createdAt))}</span>
@@ -213,6 +229,7 @@ function renderPathShares(shares) {
       return `
         <article class="path-share">
           <header>
+            <span class="chat-avatar">${avatarContent(share.sender)}</span>
             <strong>${escapeHtml(share.sender.displayName)}</strong>
             <small>${escapeHtml(relativeTime(share.createdAt))}</small>
           </header>
@@ -309,9 +326,12 @@ function renderGroupMessages(messages) {
       (message) => `
         <article class="group-message ${message.sender.id === myId ? "mine" : ""}">
           <div class="group-message-meta">
-            <strong>${escapeHtml(
-              message.sender.id === myId ? "คุณ" : message.sender.displayName
-            )}</strong>
+            <span class="message-owner">
+              <span class="chat-avatar">${avatarContent(message.sender)}</span>
+              <strong>${escapeHtml(
+                message.sender.id === myId ? "คุณ" : message.sender.displayName
+              )}</strong>
+            </span>
             <time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(
               relativeTime(message.createdAt)
             )}</time>
@@ -321,6 +341,66 @@ function renderGroupMessages(messages) {
     )
     .join("");
   elements.groupChatMessages.scrollTop = elements.groupChatMessages.scrollHeight;
+}
+
+function renderWorldChatMessages(messages) {
+  if (!messages.length) {
+    elements.worldChatMessages.innerHTML = empty(
+      "ยังไม่มีข้อความ เป็นคนแรกที่ทักทายผู้เรียนทุกคนได้เลย"
+    );
+    return;
+  }
+  const myId = state.dashboard?.me?.id;
+  const shouldStickToBottom =
+    elements.worldChatMessages.scrollHeight -
+      elements.worldChatMessages.scrollTop -
+      elements.worldChatMessages.clientHeight <
+    80;
+  elements.worldChatMessages.innerHTML = messages
+    .map(
+      (message) => `
+        <article class="world-chat-message ${message.sender.id === myId ? "mine" : ""}">
+          <span class="chat-avatar">${avatarContent(message.sender)}</span>
+          <div class="world-chat-bubble">
+            <div class="world-chat-meta">
+              <strong>${escapeHtml(
+                message.sender.id === myId ? "คุณ" : message.sender.displayName
+              )}</strong>
+              <small>#${escapeHtml(message.sender.uid)}</small>
+              <time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(
+                relativeTime(message.createdAt)
+              )}</time>
+            </div>
+            <p>${escapeHtml(message.content)}</p>
+          </div>
+        </article>`
+    )
+    .join("");
+  if (shouldStickToBottom) {
+    elements.worldChatMessages.scrollTop = elements.worldChatMessages.scrollHeight;
+  }
+}
+
+async function loadWorldChat(showLoading = false) {
+  if (showLoading) {
+    elements.worldChatMessages.innerHTML =
+      '<div class="empty">กำลังโหลด Global Chat...</div>';
+  }
+  try {
+    const payload = await apiRequest("/api/social/world-chat/messages");
+    renderWorldChatMessages(payload.data.messages || []);
+    elements.worldChatStatus.textContent = "";
+  } catch (error) {
+    elements.worldChatStatus.textContent = error.message;
+  }
+}
+
+function startWorldChatPolling() {
+  window.clearInterval(state.worldChatPollTimer);
+  state.worldChatPollTimer = window.setInterval(
+    () => loadWorldChat(false),
+    5000
+  );
 }
 
 async function loadGroupMessages(showLoading = false) {
@@ -391,7 +471,7 @@ function renderRequests(requests) {
     .map(
       (item) => `
         <article class="request-card">
-          <div class="mini-avatar">${escapeHtml(initials(item.displayName))}</div>
+          <div class="mini-avatar">${avatarContent(item)}</div>
           <div><strong>${escapeHtml(item.displayName)}</strong><small>#${escapeHtml(item.uid)}</small></div>
           <div class="request-actions">
             <button class="button ghost" type="button" data-request-id="${escapeHtml(item.requestId)}" data-accept="true">รับ</button>
@@ -413,7 +493,7 @@ function renderFriends(friends) {
     .map(
       (friend) => `
         <article class="friend-card">
-          <div class="mini-avatar">${escapeHtml(initials(friend.displayName))}</div>
+          <div class="mini-avatar">${avatarContent(friend)}</div>
           <div>
             <strong>${escapeHtml(friend.displayName)}</strong>
             <small>#${escapeHtml(friend.uid)} · ${escapeHtml(friend.careerName)}</small>
@@ -443,7 +523,7 @@ function renderSearchResults(results) {
       const canAdd = person.friendshipStatus === "none";
       return `
         <article class="person-row">
-          <div class="mini-avatar">${escapeHtml(initials(person.displayName))}</div>
+          <div class="mini-avatar">${avatarContent(person)}</div>
           <div>
             <strong>${escapeHtml(person.displayName)}</strong>
             <small>#${escapeHtml(person.uid)} · ${escapeHtml(person.careerName)}</small>
@@ -586,6 +666,27 @@ elements.groupChatForm.addEventListener("submit", async (event) => {
   }
 });
 
+elements.worldChatForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const content = elements.worldChatInput.value.trim();
+  if (!content) return;
+  elements.worldChatSend.disabled = true;
+  elements.worldChatStatus.textContent = "กำลังส่ง...";
+  try {
+    await apiRequest("/api/social/world-chat/messages", {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    elements.worldChatInput.value = "";
+    await loadWorldChat(false);
+  } catch (error) {
+    elements.worldChatStatus.textContent = error.message;
+  } finally {
+    elements.worldChatSend.disabled = false;
+    elements.worldChatInput.focus();
+  }
+});
+
 elements.leaveGroup.addEventListener("click", async () => {
   if (!state.activeGroupId) return;
   const group = state.dashboard.groups.find(
@@ -705,4 +806,12 @@ elements.notificationList.addEventListener("click", async (event) => {
   }
 });
 
-document.addEventListener("DOMContentLoaded", () => loadDashboard(true));
+document.addEventListener("DOMContentLoaded", async () => {
+  await Promise.all([loadDashboard(true), loadWorldChat(true)]);
+  startWorldChatPolling();
+});
+
+window.addEventListener("beforeunload", () => {
+  stopChatPolling();
+  window.clearInterval(state.worldChatPollTimer);
+});

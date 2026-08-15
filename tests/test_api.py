@@ -80,6 +80,52 @@ class ApiTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_session_user_id_accepts_string_values(self) -> None:
+        with self.client.session_transaction() as session:
+            session["user_id"] = str(self.user_id)
+
+        response = self.client.get("/api/me")
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["id"], self.user_id)
+
+    def test_register_requires_login_before_onboarding(self) -> None:
+        new_email = f"register-{uuid4().hex[:8]}@example.com"
+        new_password = "test-pass-1234"
+
+        response = self.client.post(
+            "/api/register",
+            json={"email": new_email, "password": new_password},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["redirect"], "/login")
+        with self.client.session_transaction() as browser_session:
+            self.assertNotIn("user_id", browser_session)
+
+        login_response = self.client.post(
+            "/api/login",
+            json={"email": new_email, "password": new_password},
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(
+            login_response.get_json()["data"]["redirect"],
+            "/onboarding",
+        )
+        self.assertEqual(self.client.get("/onboarding").status_code, 200)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE email = %s", (new_email,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_health_endpoint(self) -> None:
         response = self.client.get("/api/health")
         payload = response.get_json()
@@ -116,6 +162,356 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"tracks-hero", select_track.data)
         self.assertEqual(roadmap.status_code, 200)
         self.assertIn(b"roadmap-page", roadmap.data)
+
+    def test_first_login_onboarding_redirect_and_page_are_available(self) -> None:
+        """New users should be redirected to the onboarding flow and see the questionnaire."""
+        new_email = f"onboard-{uuid4().hex[:8]}@example.com"
+        new_password = "test-pass-1234"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        uuid4().hex[:12],
+                        new_email,
+                        bcrypt.hashpw(
+                            new_password.encode("utf-8"),
+                            bcrypt.gensalt(),
+                        ).decode("utf-8"),
+                    ),
+                )
+                user_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO user_profiles (user_id, display_name) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
+                    (user_id, "New User"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        login_response = self.client.post(
+            "/api/login",
+            json={"email": new_email, "password": new_password},
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.get_json()["data"]["redirect"], "/onboarding")
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = user_id
+
+        onboarding_response = self.client.get("/onboarding")
+        self.assertEqual(onboarding_response.status_code, 200)
+        self.assertIn(b"favoriteAnimal", onboarding_response.data)
+        self.assertIn(b'name="gender"', onboarding_response.data)
+        self.assertNotIn(b"favoriteSeason", onboarding_response.data)
+        self.assertIn(b"window.location.href = '/select-track'", onboarding_response.data)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    @patch(
+        "app.AIService.generate_profile_image",
+        return_value=b"\x89PNG\r\n\x1a\nmock-profile-image",
+    )
+    def test_onboarding_stores_and_renders_generated_profile_image(self, generate_image) -> None:
+        """The exact stored prompt must produce bytes rendered back from BYTEA."""
+
+        answers = {
+            "favoriteAnimal": "lion",
+            "favoriteColor": "magenta",
+            "gender": "หญิง",
+        }
+        response = self.client.post("/api/profile/onboarding", json=answers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["data"]["profileImageGenerated"])
+        call_kwargs = generate_image.call_args.kwargs
+        self.assertFalse(call_kwargs["allow_fallback"])
+        self.assertIn("lion", call_kwargs["prompt"])
+        self.assertIn("magenta", call_kwargs["prompt"])
+        self.assertIn("gender: female", call_kwargs["prompt"])
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_prompt, profile_picture FROM user_profiles WHERE user_id = %s",
+                    (self.user_id,),
+                )
+                stored_prompt, stored_picture = cur.fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(stored_prompt, call_kwargs["prompt"])
+        self.assertEqual(bytes(stored_picture), b"\x89PNG\r\n\x1a\nmock-profile-image")
+
+        current_user = self.client.get("/api/me").get_json()["data"]
+        self.assertTrue(current_user["profileImage"].startswith("data:image/png;base64,"))
+        self.assertTrue(current_user["profileImageGenerated"])
+        self.assertEqual(current_user["gender"], "หญิง")
+        self.assertNotIn("profilePrompt", current_user)
+
+        profile_page = self.client.get("/profile")
+        self.assertNotIn(b'id="profile-prompt"', profile_page.data)
+        self.assertIn(b'id="profile-avatar"', profile_page.data)
+
+        # Repeating onboarding and calling the refresh API must both reuse the
+        # stored portrait without invoking the image provider again.
+        repeated_onboarding = self.client.post("/api/profile/onboarding", json=answers)
+        self.assertEqual(repeated_onboarding.status_code, 409)
+        self.assertEqual(generate_image.call_count, 1)
+
+        refresh_response = self.client.post("/api/profile/refresh")
+        self.assertEqual(refresh_response.status_code, 409)
+        self.assertEqual(generate_image.call_count, 1)
+
+        # Editing an answer remains allowed, but it must not replace the image.
+        profile_update = self.client.put(
+            "/api/profile",
+            json={"favoriteColor": "navy"},
+        )
+        self.assertEqual(profile_update.status_code, 200)
+        self.assertEqual(generate_image.call_count, 1)
+
+        # Progress/achievement updates previously regenerated the portrait.
+        progress_response = self.client.post(
+            "/api/progress",
+            json={
+                "skillId": self.available_node,
+                "completed": True,
+                "careerId": self.career_id,
+            },
+        )
+        self.assertEqual(progress_response.status_code, 200)
+        self.assertEqual(generate_image.call_count, 1)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_picture FROM user_profiles WHERE user_id = %s",
+                    (self.user_id,),
+                )
+                stored_picture_after_updates = cur.fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(
+            bytes(stored_picture_after_updates),
+            b"\x89PNG\r\n\x1a\nmock-profile-image",
+        )
+
+    def test_profile_returns_only_highest_achievement_and_its_career(self) -> None:
+        """A completed career must outrank untouched careers on the profile."""
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_career_node_progress
+                        (user_id, career_id, node_id, status, completed_at)
+                    SELECT %s, cn.career_id, cn.node_id, 'completed', NOW()
+                    FROM career_nodes cn
+                    WHERE cn.career_id = %s
+                    ON CONFLICT (user_id, career_id, node_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        completed_at = EXCLUDED.completed_at
+                    """,
+                    (self.user_id, self.career_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        response = self.client.get("/api/profile/highest-achievement")
+        payload = response.get_json()["data"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["achievement"]["name"], "God")
+        self.assertEqual(payload["achievement"]["target"], 100)
+        self.assertEqual(payload["career"]["id"], self.career_id)
+        self.assertEqual(payload["progress"], 100)
+
+        profile_page = self.client.get("/profile")
+        self.assertIn(b'id="highest-tier-name"', profile_page.data)
+        self.assertIn(b"/api/profile/highest-achievement", profile_page.data)
+
+    @patch("app.AIService.generate_profile_image")
+    def test_partial_profile_answers_do_not_consume_portrait_generation(
+        self,
+        generate_image,
+    ) -> None:
+        """A partial API update must wait for all three portrait answers."""
+
+        response = self.client.put(
+            "/api/profile",
+            json={"favoriteAnimal": "lion"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        generate_image.assert_not_called()
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT favorite_animal, favorite_color, gender, profile_picture
+                    FROM user_profiles
+                    WHERE user_id = %s
+                    """,
+                    (self.user_id,),
+                )
+                animal, color, gender, picture = cur.fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(animal, "lion")
+        self.assertIsNone(color)
+        self.assertIsNone(gender)
+        self.assertIsNone(picture)
+
+    def test_world_chat_persists_message_and_main_profile_identity(self) -> None:
+        profile_picture = b"\x89PNG\r\n\x1a\nworld-chat-profile"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE user_profiles
+                    SET display_name = %s, profile_picture = %s
+                    WHERE user_id = %s
+                    """,
+                    ("API Test User", profile_picture, self.user_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        sent = self.client.post(
+            "/api/social/world-chat/messages",
+            json={"content": "Hello global learners"},
+        )
+        self.assertEqual(sent.status_code, 201)
+        sent_message = sent.get_json()["data"]
+        self.assertEqual(sent_message["sender"]["displayName"], "API Test User")
+        self.assertTrue(
+            sent_message["sender"]["profileImage"].startswith(
+                "data:image/png;base64,"
+            )
+        )
+
+        loaded = self.client.get("/api/social/world-chat/messages")
+        self.assertEqual(loaded.status_code, 200)
+        message = next(
+            item
+            for item in loaded.get_json()["data"]["messages"]
+            if item["id"] == sent_message["id"]
+        )
+        self.assertEqual(message["content"], "Hello global learners")
+        self.assertEqual(message["sender"], sent_message["sender"])
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT user_id, content FROM world_chat_messages WHERE id = %s",
+                    (sent_message["id"],),
+                )
+                stored_user_id, stored_content = cur.fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(stored_user_id, self.user_id)
+        self.assertEqual(stored_content, "Hello global learners")
+
+    def test_social_dashboard_accepts_numeric_string_session_user_id(self) -> None:
+        with self.client.session_transaction() as browser_session:
+            browser_session["user_id"] = str(self.user_id)
+
+        response = self.client.get("/api/social/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["me"]["id"], self.user_id)
+
+    def test_friend_and_match_use_the_main_profile_picture(self) -> None:
+        my_picture = b"\x89PNG\r\n\x1a\nfriend-owner-profile"
+        buddy_picture = b"\x89PNG\r\n\x1a\nfriend-buddy-profile"
+        buddy_uid = uuid4().hex[:12]
+        buddy_email = f"buddy-{uuid4().hex[:8]}@example.com"
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE user_profiles SET profile_picture = %s WHERE user_id = %s",
+                    (my_picture, self.user_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        buddy_uid,
+                        buddy_email,
+                        bcrypt.hashpw(
+                            b"buddy-pass-1234", bcrypt.gensalt()
+                        ).decode("utf-8"),
+                    ),
+                )
+                buddy_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, display_name, profile_picture)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        display_name = EXCLUDED.display_name,
+                        profile_picture = EXCLUDED.profile_picture
+                    """,
+                    (buddy_id, "Profile Buddy", buddy_picture),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO friendships (user_id, friend_id, status)
+                    VALUES (%s, %s, 'accepted')
+                    """,
+                    (self.user_id, buddy_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        def cleanup_buddy() -> None:
+            cleanup_conn = get_db()
+            try:
+                with cleanup_conn.cursor() as cur:
+                    cur.execute("DELETE FROM users WHERE id = %s", (buddy_id,))
+                cleanup_conn.commit()
+            finally:
+                cleanup_conn.close()
+
+        self.addCleanup(cleanup_buddy)
+
+        dashboard = self.client.get("/api/social/dashboard")
+        self.assertEqual(dashboard.status_code, 200)
+        data = dashboard.get_json()["data"]
+        friend = next(item for item in data["friends"] if item["id"] == buddy_id)
+        match = next(item for item in data["matches"] if item["id"] == buddy_id)
+        main_profile = self.client.get("/api/me").get_json()["data"]
+
+        self.assertTrue(friend["profileImage"].startswith("data:image/png;base64,"))
+        self.assertEqual(match["profileImage"], friend["profileImage"])
+        self.assertEqual(data["me"]["profileImage"], main_profile["profileImage"])
 
     def test_careers_come_from_the_database(self) -> None:
         response = self.client.get("/api/careers")
@@ -265,6 +661,104 @@ class ApiTests(unittest.TestCase):
         self.assertIn("recommendedSkill", payload["data"])
         self.assertTrue(payload["data"]["recommendedSkill"]["id"])
         self.assertTrue(mocked_ask_chat.called)
+
+    @patch("app.AIService._request_completion", return_value="อธิบายแบบย่อได้")
+    def test_ai_chat_passes_history_to_provider(self, mocked_completion) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "แล้ว skill ถัดไปคืออะไร",
+                    "history": [
+                        {"role": "user", "content": "ช่วยอธิบาย roadmap หน่อย"}
+                    ],
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["answer"], "อธิบายแบบย่อได้")
+        messages = mocked_completion.call_args.args[0]
+        self.assertIn(
+            {"role": "user", "content": "ช่วยอธิบาย roadmap หน่อย"},
+            messages,
+        )
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertEqual(messages[-1]["content"], "แล้ว skill ถัดไปคืออะไร")
+
+    def test_ai_chat_rejects_non_list_history(self) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "สวัสดี",
+                    "history": "not-a-list",
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(payload["ok"])
+        self.assertIn("history", payload["error"])
+
+    @patch("app.AIService._request_completion", return_value="อธิบาย Skill นี้ได้เลย")
+    def test_ai_chat_with_target_skill_sends_focus_context(self, mocked_completion) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "ช่วยอธิบาย skill นี้หน่อย",
+                    "targetSkillId": self.available_node,
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["answer"], "อธิบาย Skill นี้ได้เลย")
+        self.assertEqual(
+            payload["data"]["focusedSkill"]["id"], self.available_node
+        )
+        messages = mocked_completion.call_args.args[0]
+        focus_message = next(
+            message
+            for message in messages
+            if "Focused skill" in message["content"]
+        )
+        self.assertIn(self.available_node, focus_message["content"])
+
+    def test_ai_chat_rejects_unknown_target_skill(self) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "ช่วยอธิบายหน่อย",
+                    "targetSkillId": "not_a_skill",
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "Target skill not found")
+        self.assertEqual(payload["details"], "not_a_skill")
 
     def test_plan_preview_endpoint_returns_schedule(self) -> None:
         """Schedule the DB graph for the signed-in user (no fixtures)."""

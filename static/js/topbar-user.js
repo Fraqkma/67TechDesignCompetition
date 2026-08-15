@@ -5,6 +5,8 @@
   "use strict";
   var container = document.getElementById("topbar-user");
   var nameEl = document.getElementById("user-display-name");
+  var profileImage = document.getElementById("user-profile-image");
+  var fallbackIcon = document.getElementById("user-avatar-fallback");
   if (!container) return;
 
   fetch("/api/me", { credentials: "same-origin" })
@@ -12,6 +14,11 @@
     .then(function (body) {
       if (!body || !body.ok) return;
       if (nameEl) nameEl.textContent = body.data.displayName || body.data.email || "";
+      if (profileImage && body.data.profileImage && body.data.profileImageGenerated) {
+        profileImage.src = body.data.profileImage;
+        profileImage.removeAttribute("hidden");
+        if (fallbackIcon) fallbackIcon.setAttribute("hidden", "");
+      }
       container.hidden = false;
     })
     .catch(function () {});

@@ -174,8 +174,61 @@ body {
   background: rgba(82, 76, 107, 0.18);
 }
 
+.profile-avatar-image {
+  padding: 0;
+  object-fit: cover;
+  border-color: rgba(82, 214, 232, 0.62);
+}
+
+.social-menu-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.social-menu-button {
+  min-height: 38px;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.global-chat-button {
+  border-color: rgba(255, 96, 131, 0.35);
+}
+
+.global-chat-button:hover {
+  border-color: var(--recommended);
+  background: rgba(255, 96, 131, 0.09);
+}
+
+.global-chat-icon {
+  color: var(--text);
+  background: rgba(255, 96, 131, 0.2);
+}
+
 .profile-chip .user-name {
   color: var(--text);
+}
+
+@media (max-width: 760px) {
+  .social-menu-actions {
+    gap: 5px;
+  }
+
+  .social-menu-button {
+    width: 38px;
+    min-height: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .social-menu-button > span:last-child:not(.buddy-nav-label) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
 }
 
 .user-name {

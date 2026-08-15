@@ -13,6 +13,7 @@
       main { width: min(100%, 440px); padding: 42px; border: 1px solid #335170; border-radius: 24px; background: rgba(8, 24, 45, .92); box-shadow: 0 24px 80px #0008; }
       .page-topbar { justify-self: stretch; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); margin-bottom: 20px; padding: 16px 28px; display: flex; align-items: center; border-bottom: 1px solid #335170; background: rgba(6, 18, 37, .86); backdrop-filter: blur(18px); }
       .page-topbar-inner { width: min(440px, 100%); margin: 0 auto; }
+      .back-button { width: 42px; padding: 0; margin: 0; }
       .brand { display: inline-flex; align-items: center; gap: 12px; color: #6de5ff; text-decoration: none; }
       .brand-mark { display: grid; flex: none; place-items: center; width: 42px; height: 42px; border-radius: 13px; border: 1px solid rgba(109, 229, 255, .5); background: rgba(109, 229, 255, .1); font: 900 13px/1 inherit; letter-spacing: .12em; }
       .brand strong, .brand small { display: block; }
@@ -77,7 +78,7 @@
           const response = await fetch('/api/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin', body: JSON.stringify({email, password}) });
           const result = await response.json();
           if (!response.ok || !result.ok) throw new Error(result.error || 'Could not create account');
-          window.location.assign('/select-track');
+          window.location.assign(result.data?.redirect || '/login');
         } catch (err) { error.textContent = err.message; }
         finally { submit.disabled = false; }
       });

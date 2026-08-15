@@ -384,7 +384,7 @@ function renderAchievements() {
         <div class="achievement-item ${achievement.unlocked ? "unlocked" : ""}"
              title="${escapeHtml(achievement.description)}">
           ${icon}
-          <strong>${escapeHtml(achievement.name)}</strong>
+          <strong>${escapeHtml(achievement.name)} <span class="achievement-target">${achievement.target}%</span></strong>
           <small>${escapeHtml(achievement.description)}</small>
         </div>`;
     })
@@ -450,6 +450,11 @@ function openSkill(skillId) {
   if (!skill) return;
 
   state.selectedSkillId = skillId;
+  window.dispatchEvent(
+    new CustomEvent("ai:focus-skill", {
+      detail: { skillId, name: skill.name, thaiName: skill.thaiName },
+    })
+  );
   renderNodes();
 
   const subject = getSubject(skill.subjectId);
@@ -667,6 +672,7 @@ elements.resetButton.addEventListener("click", async () => {
     });
     state.roadmap = payload.data;
     state.selectedSkillId = null;
+    window.dispatchEvent(new CustomEvent("ai:clear-focus"));
     elements.skillDetail.classList.add("hidden");
     elements.emptyDetail.classList.remove("hidden");
     renderAll();
