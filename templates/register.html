@@ -51,7 +51,7 @@
           const response = await fetch('/api/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin', body: JSON.stringify({email, password}) });
           const result = await response.json();
           if (!response.ok || !result.ok) throw new Error(result.error || 'Could not create account');
-          window.location.assign('/select-track');
+          window.location.assign(result.data?.redirect || '/login');
         } catch (err) { error.textContent = err.message; }
         finally { submit.disabled = false; }
       });

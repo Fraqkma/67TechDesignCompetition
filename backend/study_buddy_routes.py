@@ -57,12 +57,15 @@ def create_study_buddy_blueprint(
         return user_id
 
     def ensure_tables(conn) -> None:
+        # All DDL (including the social tables) is consolidated in
+        # db_store.SCHEMA_STATEMENTS so a single call creates everything.
         db_store.ensure_schema(conn)
-        social_store.ensure_social_schema(conn)
 
-    def load_completed(conn, user_id: int, engine: GraphEngine) -> set[str]:
+    def load_completed(
+        conn, user_id: int, career_id: int, engine: GraphEngine
+    ) -> set[str]:
         return engine.clean_completed(
-            db_store.load_completed_node_ids(conn, user_id)
+            db_store.load_completed_node_ids(conn, user_id, career_id)
         )
 
     def load_user_graph(conn, user_id: int):
@@ -73,7 +76,7 @@ def create_study_buddy_blueprint(
             raise GraphValidationError("No careers are configured")
         database = db_store.load_database(conn, career_id)
         engine = GraphEngine(database)
-        completed = load_completed(conn, user_id, engine)
+        completed = load_completed(conn, user_id, career_id, engine)
         return str(career_id), engine, completed
 
     def enrich_group(group: dict[str, Any], engine: GraphEngine):
@@ -112,7 +115,12 @@ def create_study_buddy_blueprint(
                 for friend in friends:
                     friend["currentCareerId"] = career_id
                     friend["careerName"] = engine.career["name"]
-                    friend_completed = load_completed(conn, friend["id"], engine)
+                    friend_completed = load_completed(
+                        conn,
+                        friend["id"],
+                        int(career_id),
+                        engine,
+                    )
                     matches.append(
                         build_buddy_match(
                             engine, completed, friend_completed, friend

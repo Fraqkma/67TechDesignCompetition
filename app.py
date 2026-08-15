@@ -8,6 +8,7 @@ engine stays the single source of truth for prerequisites.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 from datetime import date, datetime, timezone
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 try:
     from dotenv import load_dotenv
@@ -63,6 +64,10 @@ DB_CONFIG = {
     "password": os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD"),
 }
 
+PROFILE_GENDER_CHOICES = frozenset(
+    {"ชาย", "หญิง", "นอนไบนารี", "ไม่ต้องการระบุ"}
+)
+
 _missing_db_keys = [
     key for key, value in DB_CONFIG.items() if value is None
 ]
@@ -105,6 +110,14 @@ def create_app(database_path: str | None = None) -> Flask:
         "dev-secret-change-this",
     )
 
+    @app.get("/pignopic/<path:filename>")
+    def achievement_image(filename: str):
+        """Serve only the supplied achievement artwork outside static/."""
+        allowed = {"join.png", "noob.png", "pro.png", "hacker.png", "god.png"}
+        if filename not in allowed:
+            return error("Achievement image not found", 404)
+        return send_from_directory(Path(app.root_path) / "pignopic", filename)
+
     # =====================================================
     # Response Helpers
     # =====================================================
@@ -141,6 +154,23 @@ def create_app(database_path: str | None = None) -> Flask:
 
         return jsonify(payload), status
 
+    def profile_image_data_url(image_bytes: bytes | bytearray | memoryview | None) -> tuple[str | None, bool]:
+        """Serialize stored image bytes and identify real AI raster portraits.
+
+        Legacy deterministic fallbacks were stored as SVG. They remain readable,
+        but are explicitly marked as not generated so the UI can offer a retry
+        instead of presenting a fallback as the learner's finished AI portrait.
+        """
+
+        if not image_bytes:
+            return None, False
+        stored_bytes = bytes(image_bytes)
+        mime_type = AIService.profile_image_mime_type(stored_bytes)
+        if mime_type is None:
+            return None, False
+        data_url = f"data:{mime_type};base64,{base64.b64encode(stored_bytes).decode('ascii')}"
+        return data_url, mime_type != "image/svg+xml"
+
     # =====================================================
     # Graph / DB Helpers
     # =====================================================
@@ -167,13 +197,79 @@ def create_app(database_path: str | None = None) -> Flask:
         roadmap_payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Add DB-driven user context (achievements + rank) to a roadmap."""
-        roadmap_payload["achievements"] = (
-            db_store.build_achievements_payload(conn, user_id, completed)
+        roadmap_payload["achievements"] = db_store.build_achievements_payload(
+            conn, user_id, completed, roadmap_payload["progress"]["career"]
         )
         roadmap_payload["rank"] = db_store.load_rank(
             conn, roadmap_payload["progress"]["career"]
         )
         return roadmap_payload
+
+    def highest_career_achievement_for_user(
+        conn,
+        user_id: int,
+    ) -> dict[str, Any] | None:
+        """Return the learner's highest graph-derived tier across all careers."""
+
+        current_career_id = db_store.user_career_id(conn, user_id)
+        best: dict[str, Any] | None = None
+        best_key: tuple[int, int, int, int] | None = None
+
+        for career in db_store.list_careers(conn):
+            if not career["available"]:
+                continue
+
+            career_id = int(career["id"])
+            engine = GraphEngine(db_store.load_database(conn, career_id))
+            completed = engine.clean_completed(
+                db_store.load_completed_node_ids(conn, user_id, career_id)
+            )
+            progress = int(engine.calculate_progress(completed)["career"])
+            unlocked = [
+                achievement
+                for achievement in db_store.build_achievements_payload(
+                    conn,
+                    user_id,
+                    completed,
+                    progress,
+                )
+                if achievement["unlocked"]
+            ]
+            if not unlocked:
+                continue
+
+            achievement = max(
+                unlocked,
+                key=lambda item: int(item["target"]),
+            )
+            target = int(achievement["target"])
+            candidate_key = (
+                target,
+                progress,
+                1 if career_id == current_career_id else 0,
+                -career_id,
+            )
+            if best_key is not None and candidate_key <= best_key:
+                continue
+
+            best_key = candidate_key
+            best = {
+                "achievement": {
+                    "id": achievement["id"],
+                    "name": achievement["name"],
+                    "description": achievement["description"],
+                    "iconUrl": achievement["iconUrl"],
+                    "target": target,
+                },
+                "career": {
+                    "id": career_id,
+                    "title": career["title"],
+                    "icon": career["icon"],
+                },
+                "progress": progress,
+            }
+
+        return best
 
     def logged_in_user_id() -> int | None:
         """Return the authenticated user id without trusting request data."""
@@ -181,11 +277,15 @@ def create_app(database_path: str | None = None) -> Flask:
         if isinstance(user_id, bool):
             return None
         if isinstance(user_id, int):
-            return user_id if user_id > 0 else None
+            normalized_user_id = user_id
         if isinstance(user_id, str) and user_id.isdigit():
-            parsed = int(user_id)
-            return parsed if parsed > 0 else None
-        return None
+            normalized_user_id = int(user_id)
+        elif not isinstance(user_id, int):
+            return None
+        if normalized_user_id <= 0:
+            return None
+        session["user_id"] = normalized_user_id
+        return normalized_user_id
 
     def resolve_career_id(
         career_param: str | None,
@@ -219,11 +319,13 @@ def create_app(database_path: str | None = None) -> Flask:
         finally:
             conn.close()
 
-    def load_completed_for_user(user_id: int, engine: GraphEngine) -> set[str]:
+    def load_completed_for_user(
+        user_id: int, career_id: int, engine: GraphEngine
+    ) -> set[str]:
         """Read one learner's completed nodes from PostgreSQL."""
         conn = get_db()
         try:
-            completed = db_store.load_completed_node_ids(conn, user_id)
+            completed = db_store.load_completed_node_ids(conn, user_id, career_id)
             conn.commit()
             return engine.clean_completed(completed)
         finally:
@@ -242,7 +344,7 @@ def create_app(database_path: str | None = None) -> Flask:
         conn = get_db()
         try:
             current = engine.clean_completed(
-                db_store.load_completed_node_ids(conn, user_id)
+                db_store.load_completed_node_ids(conn, user_id, int(career_id))
             )
             removed_ids: list[str] = []
             if completed_value:
@@ -255,7 +357,7 @@ def create_app(database_path: str | None = None) -> Flask:
                         )
                     )
                 newly_completed = skill_id not in current
-                db_store.save_completed(conn, user_id, int(skill_id), True)
+                db_store.save_completed(conn, user_id, int(career_id), int(skill_id), True)
                 # Award the node's EXP reward only the first time it is
                 # completed so the Code Novice achievement can unlock.
                 if newly_completed:
@@ -271,7 +373,7 @@ def create_app(database_path: str | None = None) -> Flask:
                 )
                 # removed_ids already includes skill_id itself.
                 node_ids = {int(item) for item in removed_ids}
-                db_store.delete_completed_many(conn, user_id, sorted(node_ids))
+                db_store.delete_completed_many(conn, user_id, int(career_id), sorted(node_ids))
                 # Un-completing refunds the EXP of every affected skill so
                 # toggling cannot farm points.
                 exp_to_remove = sum(
@@ -282,6 +384,7 @@ def create_app(database_path: str | None = None) -> Flask:
                     db_store.add_exp(conn, user_id, -exp_to_remove)
             roadmap_payload = engine.build_roadmap_payload(current)
             attach_user_context(conn, user_id, current, roadmap_payload)
+            refresh_user_profile_portrait(user_id, conn)
             conn.commit()
             return {
                 "roadmap": roadmap_payload,
@@ -292,6 +395,78 @@ def create_app(database_path: str | None = None) -> Flask:
             raise
         finally:
             conn.close()
+
+    def refresh_user_profile_portrait(
+        user_id: int,
+        conn=None,
+        *,
+        require_generated: bool = False,
+    ) -> bool:
+        """Generate a portrait only when this account has no stored AI portrait."""
+        owns_conn = conn is None
+        conn = conn or get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                # Serialize every generation path for this user. This prevents
+                # simultaneous requests from both calling the image provider.
+                cur.execute("SELECT pg_advisory_xact_lock(67341, %s)", (user_id,))
+                cur.execute(
+                    """
+                    SELECT favorite_animal, favorite_color, gender, profile_picture
+                    FROM user_profiles
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+                profile = cur.fetchone()
+                if profile is None or any(value is None for value in profile[:3]):
+                    return False
+
+                animal, color, gender, existing_picture = profile
+                _, portrait_generated = profile_image_data_url(existing_picture)
+                if portrait_generated:
+                    return False
+                cur.execute(
+                    "SELECT a.title FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = %s ORDER BY ua.unlocked_at",
+                    (user_id,),
+                )
+                achievements = [row[0] for row in cur.fetchall()]
+
+                prompt = AIService.build_profile_prompt(
+                    {
+                        "favoriteAnimal": animal,
+                        "favoriteColor": color,
+                        "gender": gender,
+                    },
+                    achievements,
+                )
+                try:
+                    image_bytes = AIService.generate_profile_image(
+                        {
+                            "favoriteAnimal": animal,
+                            "favoriteColor": color,
+                            "gender": gender,
+                        },
+                        achievements,
+                        prompt=prompt,
+                        allow_fallback=False,
+                    )
+                except AIService.ProfileImageGenerationError:
+                    if require_generated:
+                        raise
+                    # Achievement updates must still succeed when the image
+                    # provider is temporarily unavailable. Preserve the last
+                    # real portrait instead of overwriting it with a fallback.
+                    return False
+                cur.execute(
+                    "UPDATE user_profiles SET profile_prompt = %s, profile_picture = %s, updated_at = NOW() WHERE user_id = %s",
+                    (prompt, image_bytes, user_id),
+                )
+            return True
+        finally:
+            if owns_conn and conn is not None:
+                conn.close()
 
     def validate_career_param(career_param: str | None) -> int | None:
         """Return a validated career id from the query string, if present."""
@@ -351,13 +526,34 @@ def create_app(database_path: str | None = None) -> Flask:
             return redirect("/login")
         return render_template("profile.html")
 
+    @app.get("/onboarding")
+    def onboarding_page():
+        """Serve a first-login onboarding form."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return redirect("/login")
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT favorite_animal, favorite_color, gender FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                profile = cur.fetchone()
+            if profile and all(value is not None for value in profile):
+                return redirect("/profile")
+            return render_template("onboarding.html")
+        finally:
+            conn.close()
+
     # =====================================================
     # Authentication
     # =====================================================
 
     @app.post("/api/register")
     def register():
-        """Create an account, profile, and authenticated browser session."""
+        """Create an account, then require an explicit login before onboarding."""
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return error("Request body must be JSON")
@@ -398,13 +594,18 @@ def create_app(database_path: str | None = None) -> Flask:
                     (user_id, user_email.split("@", 1)[0]),
                 )
             conn.commit()
+            # Registration must not authenticate the new account. The learner
+            # signs in explicitly, then the existing login flow redirects the
+            # incomplete profile to the three AI portrait questions.
             session.clear()
-            session["user_id"] = user_id
-            session["uid"] = uid
-            session["email"] = user_email
             return success(
-                {"id": user_id, "uid": uid, "email": user_email},
-                "Account created",
+                {
+                    "id": user_id,
+                    "uid": uid,
+                    "email": user_email,
+                    "redirect": "/login",
+                },
+                "Account created. Please log in.",
                 201,
             )
         except psycopg2.IntegrityError:
@@ -491,16 +692,32 @@ def create_app(database_path: str | None = None) -> Flask:
                 )
 
             # Save login session
-            session["user_id"] = user_id
+            session["user_id"] = int(user_id)
             session["uid"] = uid
             session["email"] = user_email
+
+            conn = get_db()
+            try:
+                db_store.ensure_schema(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT favorite_animal, favorite_color, gender FROM user_profiles WHERE user_id = %s",
+                        (user_id,),
+                    )
+                    profile = cur.fetchone()
+                if not profile or any(value is None for value in profile):
+                    redirect_path = "/onboarding"
+                else:
+                    redirect_path = "/roadmap"
+            finally:
+                conn.close()
 
             return success(
                 {
                     "id": user_id,
                     "uid": uid,
                     "email": user_email,
-                    "redirect": "/select-track",
+                    "redirect": redirect_path,
                 },
                 "Login สำเร็จ",
             )
@@ -554,6 +771,9 @@ def create_app(database_path: str | None = None) -> Flask:
                     p.level,
                     p.current_exp,
                     p.current_career_id,
+                    p.favorite_animal,
+                    p.favorite_color,
+                    p.gender,
                     p.profile_picture
                 FROM users u
                 LEFT JOIN user_profiles p
@@ -581,8 +801,13 @@ def create_app(database_path: str | None = None) -> Flask:
                 level,
                 current_exp,
                 current_career_id,
+                favorite_animal,
+                favorite_color,
+                gender,
                 profile_picture,
             ) = user
+
+            profile_image, profile_image_generated = profile_image_data_url(profile_picture)
 
             return success(
                 {
@@ -593,9 +818,11 @@ def create_app(database_path: str | None = None) -> Flask:
                     "level": level,
                     "currentExp": current_exp,
                     "currentCareerId": current_career_id,
-                    "profileImage": db_store.profile_image_data_url(
-                        profile_picture
-                    ),
+                    "favoriteAnimal": favorite_animal,
+                    "favoriteColor": favorite_color,
+                    "gender": gender,
+                    "profileImage": profile_image,
+                    "profileImageGenerated": profile_image_generated,
                 }
             )
 
@@ -625,10 +852,22 @@ def create_app(database_path: str | None = None) -> Flask:
 
         display_name = body.get("displayName")
         current_career_id = body.get("currentCareerId")
+        favorite_animal = body.get("favoriteAnimal")
+        favorite_color = body.get("favoriteColor")
+        gender = body.get("gender")
         if display_name is not None and (
             not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 80
         ):
             return error("displayName must be 1 to 80 characters")
+        for field_name, value in {
+            "favoriteAnimal": favorite_animal,
+            "favoriteColor": favorite_color,
+            "gender": gender,
+        }.items():
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                return error(f"{field_name} must be a non-empty string")
+        if isinstance(gender, str) and gender.strip() not in PROFILE_GENDER_CHOICES:
+            return error("gender must be one of the supported choices")
 
         if current_career_id is not None:
             if isinstance(current_career_id, str) and current_career_id.isdigit():
@@ -642,33 +881,95 @@ def create_app(database_path: str | None = None) -> Flask:
             finally:
                 conn.close()
 
-        if display_name is None and current_career_id is None:
-            return error("Provide displayName or currentCareerId")
+        if display_name is None and current_career_id is None and favorite_animal is None and favorite_color is None and gender is None:
+            return error("Provide displayName, currentCareerId, or onboarding answers")
 
         conn = None
         try:
             conn = get_db()
             db_store.ensure_schema(conn)
             with conn.cursor() as cur:
+                # All endpoints that may generate a portrait take this same
+                # per-user lock before reading or writing the profile row.
+                cur.execute("SELECT pg_advisory_xact_lock(67341, %s)", (user_id,))
+                normalized_display_name = (
+                    display_name.strip() if isinstance(display_name, str) else None
+                )
+                insert_display_name = (
+                    normalized_display_name
+                    or db_store.user_display_name(conn, user_id)
+                    or "Learner"
+                )
+                profile_answers = {
+                    "favorite_animal": favorite_animal.strip() if isinstance(favorite_animal, str) else None,
+                    "favorite_color": favorite_color.strip() if isinstance(favorite_color, str) else None,
+                    "gender": gender.strip() if isinstance(gender, str) else None,
+                }
                 cur.execute(
                     """
-                    INSERT INTO user_profiles (user_id, display_name, current_career_id)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO user_profiles (user_id, display_name, current_career_id, favorite_animal, favorite_color, gender)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
-                        display_name = COALESCE(EXCLUDED.display_name, user_profiles.display_name),
+                        display_name = COALESCE(%s, user_profiles.display_name),
                         current_career_id = COALESCE(EXCLUDED.current_career_id, user_profiles.current_career_id),
+                        favorite_animal = COALESCE(EXCLUDED.favorite_animal, user_profiles.favorite_animal),
+                        favorite_color = COALESCE(EXCLUDED.favorite_color, user_profiles.favorite_color),
+                        gender = COALESCE(EXCLUDED.gender, user_profiles.gender),
                         updated_at = NOW()
-                    RETURNING display_name, current_career_id
+                    RETURNING display_name, current_career_id, favorite_animal, favorite_color, gender, profile_picture
                     """,
                     (
                         user_id,
-                        display_name.strip() if isinstance(display_name, str) else None,
+                        insert_display_name,
                         current_career_id,
+                        profile_answers["favorite_animal"],
+                        profile_answers["favorite_color"],
+                        profile_answers["gender"],
+                        normalized_display_name,
                     ),
                 )
-                name, career_id = cur.fetchone()
+                name, career_id, animal, color, gender_value, existing_picture = cur.fetchone()
+
+                achievement_names = []
+                cur.execute(
+                    "SELECT a.title FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = %s ORDER BY ua.unlocked_at",
+                    (user_id,),
+                )
+                for row in cur.fetchall():
+                    achievement_names.append(row[0])
+
+                answers_changed = any(
+                    value is not None
+                    for value in (favorite_animal, favorite_color, gender)
+                )
+                answers_complete = all(
+                    isinstance(value, str) and bool(value.strip())
+                    for value in (animal, color, gender_value)
+                )
+                _, portrait_generated = profile_image_data_url(existing_picture)
+                if answers_changed and answers_complete and not portrait_generated:
+                    profile_payload = {
+                        "favoriteAnimal": animal,
+                        "favoriteColor": color,
+                        "gender": gender_value,
+                    }
+                    prompt = AIService.build_profile_prompt(profile_payload, achievement_names)
+                    image_bytes = AIService.generate_profile_image(
+                        profile_payload,
+                        achievement_names,
+                        prompt=prompt,
+                        allow_fallback=False,
+                    )
+                    cur.execute(
+                        "UPDATE user_profiles SET profile_prompt = %s, profile_picture = %s, updated_at = NOW() WHERE user_id = %s",
+                        (prompt, image_bytes, user_id),
+                    )
             conn.commit()
-            return success({"displayName": name, "currentCareerId": career_id}, "Profile updated")
+            return success({"displayName": name, "currentCareerId": career_id, "favoriteAnimal": animal, "favoriteColor": color, "gender": gender_value}, "Profile updated")
+        except AIService.ProfileImageGenerationError as exc:
+            if conn is not None:
+                conn.rollback()
+            return error("Profile image generation failed. Please try again.", 502, str(exc))
         except psycopg2.Error as exc:
             if conn is not None:
                 conn.rollback()
@@ -676,6 +977,197 @@ def create_app(database_path: str | None = None) -> Flask:
         finally:
             if conn is not None:
                 conn.close()
+
+    @app.get("/api/profile/highest-achievement")
+    def highest_profile_achievement():
+        """Return only the highest career-scoped achievement for the profile."""
+
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            highest = highest_career_achievement_for_user(conn, user_id)
+            conn.commit()
+            return success(highest, "Highest career achievement loaded")
+        except (GraphValidationError, KeyError, ValueError) as exc:
+            conn.rollback()
+            return error("Could not calculate career achievement", 500, str(exc))
+        except psycopg2.Error as exc:
+            conn.rollback()
+            return error("Database connection failed", 500, str(exc))
+        finally:
+            conn.close()
+
+    @app.get("/api/profile/onboarding")
+    def onboarding_status():
+        """Return whether the current user still needs the first-login onboarding form."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT favorite_animal, favorite_color, gender, profile_picture FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+            if row is None:
+                return success({"required": True})
+            _, portrait_generated = profile_image_data_url(row[3])
+            return success(
+                {
+                    "required": (
+                        row[0] is None
+                        or row[1] is None
+                        or row[2] is None
+                        or not portrait_generated
+                    )
+                }
+            )
+        finally:
+            conn.close()
+
+    @app.post("/api/profile/onboarding")
+    def onboarding_submit():
+        """Persist first-login personality answers and generate the profile portrait."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("Request body must be JSON")
+        answers = {
+            "favoriteAnimal": body.get("favoriteAnimal"),
+            "favoriteColor": body.get("favoriteColor"),
+            "gender": body.get("gender"),
+        }
+        for key, value in answers.items():
+            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 80:
+                return error(f"{key} must be 1 to 80 characters")
+            answers[key] = value.strip()
+        if answers["gender"] not in PROFILE_GENDER_CHOICES:
+            return error("gender must be one of the supported choices")
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_xact_lock(67341, %s)", (user_id,))
+                cur.execute(
+                    "SELECT profile_picture FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                existing_profile = cur.fetchone()
+                _, portrait_generated = profile_image_data_url(
+                    existing_profile[0] if existing_profile else None
+                )
+                if portrait_generated:
+                    return error(
+                        "Profile picture can only be generated once per account",
+                        409,
+                    )
+                cur.execute(
+                    "SELECT a.title FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = %s ORDER BY ua.unlocked_at",
+                    (user_id,),
+                )
+                achievements = [row[0] for row in cur.fetchall()]
+            prompt = AIService.build_profile_prompt(answers, achievements)
+            image_bytes = AIService.generate_profile_image(
+                answers,
+                achievements,
+                prompt=prompt,
+                allow_fallback=False,
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, display_name, favorite_animal, favorite_color, gender, profile_prompt, profile_picture)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        favorite_animal = EXCLUDED.favorite_animal,
+                        favorite_color = EXCLUDED.favorite_color,
+                        gender = EXCLUDED.gender,
+                        profile_prompt = EXCLUDED.profile_prompt,
+                        profile_picture = EXCLUDED.profile_picture,
+                        updated_at = NOW()
+                    RETURNING favorite_animal, favorite_color, gender
+                    """,
+                    (
+                        user_id,
+                        (db_store.user_display_name(conn, user_id) or "Learner"),
+                        answers["favoriteAnimal"],
+                        answers["favoriteColor"],
+                        answers["gender"],
+                        prompt,
+                        image_bytes,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            profile_image, _ = profile_image_data_url(image_bytes)
+            return success(
+                {
+                    "favoriteAnimal": row[0],
+                    "favoriteColor": row[1],
+                    "gender": row[2],
+                    "profileImage": profile_image,
+                    "profileImageGenerated": True,
+                },
+                "Onboarding completed",
+            )
+        except AIService.ProfileImageGenerationError as exc:
+            conn.rollback()
+            return error("Profile image generation failed. Please try again.", 502, str(exc))
+        except psycopg2.Error as exc:
+            conn.rollback()
+            return error("Database connection failed", 500, str(exc))
+        finally:
+            conn.close()
+
+    @app.post("/api/profile/refresh")
+    def refresh_profile_portrait():
+        """Generate the portrait once for accounts still missing a real image."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_xact_lock(67341, %s)", (user_id,))
+                cur.execute(
+                    "SELECT profile_picture FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                existing_profile = cur.fetchone()
+                _, portrait_generated = profile_image_data_url(
+                    existing_profile[0] if existing_profile else None
+                )
+                if portrait_generated:
+                    return error(
+                        "Profile picture can only be generated once per account",
+                        409,
+                    )
+            refreshed = refresh_user_profile_portrait(
+                user_id,
+                conn,
+                require_generated=True,
+            )
+            conn.commit()
+            if not refreshed:
+                return error("Profile onboarding answers are not set yet", 400)
+            return success({"refreshed": True}, "Profile portrait refreshed")
+        except AIService.ProfileImageGenerationError as exc:
+            conn.rollback()
+            return error("Profile image generation failed. Please try again.", 502, str(exc))
+        except psycopg2.Error as exc:
+            conn.rollback()
+            return error("Database connection failed", 500, str(exc))
+        finally:
+            conn.close()
 
     # =====================================================
     # Logout
@@ -760,7 +1252,7 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             career_id = resolve_career_id(request.args.get("career"), user_id)
             _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, engine)
+            completed = load_completed_for_user(user_id, career_id, engine)
 
             valid_subjects = {
                 "all",
@@ -825,7 +1317,7 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             career_id = resolve_career_id(request.args.get("career"), user_id)
             _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, engine)
+            completed = load_completed_for_user(user_id, career_id, engine)
 
             roadmap_data = engine.build_roadmap_payload(
                 completed
@@ -885,7 +1377,7 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             career_id = resolve_career_id(request.args.get("career"), user_id)
             _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, engine)
+            completed = load_completed_for_user(user_id, career_id, engine)
 
             if skill_id not in engine.skill_by_id:
                 return error(
@@ -964,8 +1456,9 @@ def create_app(database_path: str | None = None) -> Flask:
             return error("startDate must use YYYY-MM-DD")
 
         try:
-            _, engine, _ = load_engine()
-            completed = load_completed_for_user(user_id, engine)
+            career_id = resolve_career_id(body.get("careerId"), user_id)
+            _, engine, _ = load_engine(career_id)
+            completed = load_completed_for_user(user_id, career_id, engine)
             return success(
                 PlanService.build_preview(
                     engine,
@@ -1063,10 +1556,7 @@ def create_app(database_path: str | None = None) -> Flask:
             _, engine, _ = load_engine(career_id)
             conn = get_db()
             db_store.ensure_schema(conn)
-            db_store.reset_progress(conn, user_id)
-            # Achievements derive from progress, so clear unlocked records
-            # too and let them re-evaluate from the reset state.
-            db_store.clear_user_achievements(conn, user_id)
+            db_store.reset_progress(conn, user_id, career_id)
             roadmap_payload = engine.build_roadmap_payload(set())
             attach_user_context(conn, user_id, set(), roadmap_payload)
             conn.commit()
@@ -1112,7 +1602,7 @@ def create_app(database_path: str | None = None) -> Flask:
             _, engine, _ = load_engine(career_id)
             user_id = logged_in_user_id()
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )
@@ -1242,7 +1732,7 @@ def create_app(database_path: str | None = None) -> Flask:
             career_id = resolve_career_id(body.get("careerId"), user_id)
             _, engine, _ = load_engine(career_id)
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )
@@ -1368,7 +1858,7 @@ def create_app(database_path: str | None = None) -> Flask:
             career_id = resolve_career_id(body.get("careerId"), user_id)
             _, engine, _ = load_engine(career_id)
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )
@@ -1496,7 +1986,7 @@ def create_app(database_path: str | None = None) -> Flask:
             career_id = resolve_career_id(body.get("careerId"), user_id)
             _, engine, _ = load_engine(career_id)
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )

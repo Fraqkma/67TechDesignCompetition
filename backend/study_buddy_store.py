@@ -1,4 +1,8 @@
-"""PostgreSQL storage for friends, sharing, notifications, and study groups."""
+"""PostgreSQL storage for friends, sharing, notifications, and study groups.
+
+Schema (DDL) for these tables lives in ``backend/db_store.SCHEMA_STATEMENTS``
+so ``ensure_schema()`` creates the full database in one place.
+"""
 
 from __future__ import annotations
 
@@ -6,119 +10,6 @@ import json
 from typing import Any, Iterable
 
 from backend import db_store
-
-
-SOCIAL_SCHEMA_STATEMENTS = [
-    """
-    CREATE TABLE IF NOT EXISTS friendships (
-        id BIGSERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        friend_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        status VARCHAR(20) NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (user_id, friend_id)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS study_groups (
-        id BIGSERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        career_id TEXT,
-        focus_node_id TEXT,
-        graph_career_id TEXT,
-        graph_focus_skill_id TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS study_group_members (
-        group_id BIGINT NOT NULL REFERENCES study_groups(id) ON DELETE CASCADE,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        role VARCHAR(20) NOT NULL DEFAULT 'member',
-        joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (group_id, user_id)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS study_group_messages (
-        id BIGSERIAL PRIMARY KEY,
-        group_id BIGINT NOT NULL REFERENCES study_groups(id) ON DELETE CASCADE,
-        sender_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        content TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS world_chat_messages (
-        id BIGSERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        content TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS buddy_notifications (
-        id BIGSERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        kind VARCHAR(40) NOT NULL,
-        title VARCHAR(150) NOT NULL,
-        body TEXT NOT NULL,
-        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-        read_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS study_path_shares (
-        id BIGSERIAL PRIMARY KEY,
-        sender_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        receiver_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        career_id TEXT,
-        graph_career_id TEXT,
-        message TEXT,
-        snapshot JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_buddy_notifications_user_created
-    ON buddy_notifications (user_id, created_at DESC)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_study_path_shares_receiver_created
-    ON study_path_shares (receiver_user_id, created_at DESC)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_study_group_messages_group_created
-    ON study_group_messages (group_id, created_at DESC)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_world_chat_messages_created
-    ON world_chat_messages (created_at DESC, id DESC)
-    """,
-    """
-    ALTER TABLE study_groups
-    ADD COLUMN IF NOT EXISTS graph_career_id TEXT
-    """,
-    """
-    ALTER TABLE study_groups
-    ADD COLUMN IF NOT EXISTS graph_focus_skill_id TEXT
-    """,
-    """
-    ALTER TABLE study_path_shares
-    ADD COLUMN IF NOT EXISTS graph_career_id TEXT
-    """,
-]
-
-
-def ensure_social_schema(conn) -> None:
-    """Create only the additive social tables described by the project DB doc."""
-
-    with conn.cursor() as cur:
-        for statement in SOCIAL_SCHEMA_STATEMENTS:
-            cur.execute(statement)
 
 
 def _person(row) -> dict[str, Any]:

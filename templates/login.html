@@ -1039,9 +1039,8 @@
 
 
           // Login สำเร็จ
-
-          window.location.href =
-            result?.data?.redirect || "/select-track";
+          const redirectPath = result?.data?.redirect || "/roadmap";
+          window.location.href = redirectPath;
 
         }
 

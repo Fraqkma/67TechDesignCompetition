@@ -13,8 +13,25 @@
       header { width: min(100% - 40px, 860px); margin: auto; min-height: 80px; display: flex; align-items: center; justify-content: space-between; } a { color: #75e6ff; text-decoration: none; font-weight: 700; }
       main { width: min(100% - 40px, 620px); margin: 56px auto; padding: 40px; border: 1px solid #335170; border-radius: 24px; background: rgba(8, 24, 45, .92); box-shadow: 0 24px 80px #0008; }
       .eyebrow { color: #6de5ff; font-size: .8rem; letter-spacing: .15em; font-weight: 800; } h1 { margin: 12px 0 8px; } p { color: #a9bed2; line-height: 1.6; } label { display: block; margin: 24px 0 8px; font-weight: 700; } input { width: 100%; padding: 14px; border: 1px solid #41617c; border-radius: 12px; background: #091a2e; color: #eef5ff; font: inherit; } input:disabled { color: #a9bed2; } button { border: 0; border-radius: 12px; padding: 13px 18px; font: 700 1rem inherit; cursor: pointer; } #save { margin-top: 24px; background: linear-gradient(100deg, #54d7f2, #7b70ff); color: #071324; } #logout { float: right; background: transparent; border: 1px solid #a95364; color: #ffabb4; } #message { min-height: 1.3em; margin-top: 16px; color: #8de6b2; } #message.error { color: #ff9da2; }
-      .profile-portrait { width: 112px; height: 112px; margin: 22px 0; display: grid; place-items: center; overflow: hidden; border: 2px solid #51c8e8; border-radius: 28px; background: #091a2e; color: #75e6ff; font-size: 2rem; font-weight: 800; }
-      .profile-portrait img { width: 100%; height: 100%; object-fit: cover; }
+      .portrait-card { display: grid; grid-template-columns: 116px minmax(0, 1fr); align-items: center; gap: 22px; margin: 26px 0 8px; padding: 18px; border: 1px solid rgba(109, 229, 255, .2); border-radius: 18px; background: rgba(7, 19, 38, .55); }
+      .portrait-frame { width: 116px; height: 116px; border-radius: 50%; overflow: hidden; border: 2px solid rgba(115,229,193,.65); background: #0b1830; box-shadow: 0 0 30px rgba(109, 229, 255, .12); }
+      #profile-avatar { width: 100%; height: 100%; object-fit: cover; display: block; }
+      #profile-avatar[hidden] { display: none; }
+      #profile-avatar-placeholder { width: 100%; height: 100%; display: grid; place-items: center; color: #73e5c1; font-size: 2rem; background: radial-gradient(circle at 50% 38%, rgba(109, 200, 255, .24), transparent 42%), #0b1830; }
+      #profile-avatar-placeholder[hidden] { display: none; }
+      .portrait-label { font-size: .75rem; letter-spacing: .14em; opacity: .75; text-transform: uppercase; }
+      #profile-portrait-status { margin-top: 7px; color: #c5d7e7; line-height: 1.5; }
+      .answer-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+      .answer-chip { padding: 5px 9px; border-radius: 999px; background: rgba(109, 200, 255, .1); color: #a9dfff; font-size: .78rem; }
+      #refresh-portrait { margin-top: 13px; padding: 9px 12px; border: 1px solid rgba(109, 229, 255, .35); background: rgba(109, 229, 255, .08); color: #75e6ff; font-size: .85rem; }
+      .tier-card { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 18px; margin: 18px 0 8px; padding: 18px; border: 1px solid rgba(255, 209, 102, .28); border-radius: 18px; background: linear-gradient(130deg, rgba(255, 209, 102, .09), rgba(109, 200, 255, .05)); }
+      .tier-emblem { width: 76px; height: 76px; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(255, 209, 102, .42); border-radius: 18px; background: rgba(7, 19, 38, .75); color: #ffd166; font-size: 2rem; }
+      #highest-tier-image { width: 100%; height: 100%; object-fit: contain; padding: 8px; }
+      #highest-tier-image[hidden], #highest-tier-fallback[hidden] { display: none; }
+      #highest-tier-name { display: block; margin-top: 5px; color: #fff1bd; font-size: 1.35rem; }
+      #highest-tier-career { display: inline-block; margin-top: 5px; color: #75e6ff; }
+      #highest-tier-progress { display: block; margin-top: 6px; color: #a9bed2; }
+      @media (max-width: 520px) { .portrait-card { grid-template-columns: 1fr; } .portrait-frame { width: 104px; height: 104px; } }
     </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/cosmic-theme.css') }}" />
   </head>
@@ -25,10 +42,34 @@
       <div class="eyebrow">LEARNER PROFILE</div>
       <h1>โปรไฟล์ของฉัน</h1>
       <p>ตั้งชื่อที่ใช้แสดงใน Skill Map ได้ที่นี่</p>
-      <div class="profile-portrait" aria-label="รูปโปรไฟล์หลัก">
-        <img id="profile-avatar" alt="รูปโปรไฟล์" hidden />
-        <span id="profile-avatar-fallback" aria-hidden="true">?</span>
+      <div class="portrait-card">
+        <div class="portrait-frame">
+          <img id="profile-avatar" alt="รูปโปรไฟล์ที่สร้างจากคำตอบของผู้เรียน" hidden />
+          <div id="profile-avatar-placeholder" aria-hidden="true">✦</div>
+        </div>
+        <div>
+          <div class="portrait-label">AI Portrait</div>
+          <div id="profile-portrait-status">กำลังโหลดรูปโปรไฟล์...</div>
+          <div class="answer-chips" aria-label="คำตอบสำหรับสร้างรูปโปรไฟล์">
+            <span class="answer-chip" id="answer-animal"></span>
+            <span class="answer-chip" id="answer-color"></span>
+            <span class="answer-chip" id="answer-gender"></span>
+          </div>
+          <button id="refresh-portrait" type="button" hidden>สร้างรูปโปรไฟล์ด้วย AI</button>
+        </div>
       </div>
+      <section class="tier-card" aria-labelledby="highest-tier-label">
+        <div class="tier-emblem" aria-hidden="true">
+          <img id="highest-tier-image" alt="" hidden />
+          <span id="highest-tier-fallback">🏆</span>
+        </div>
+        <div>
+          <div class="portrait-label" id="highest-tier-label">Highest Career Tier</div>
+          <strong id="highest-tier-name">กำลังโหลด...</strong>
+          <a id="highest-tier-career" href="/roadmap">Career</a>
+          <small id="highest-tier-progress"></small>
+        </div>
+      </section>
       <form id="profile-form">
         <label for="email">Email</label><input id="email" type="email" disabled />
         <label for="display-name">Display name</label><input id="display-name" type="text" maxlength="80" required />
@@ -52,17 +93,83 @@
           document.querySelector('#email').value = user.email;
           document.querySelector('#display-name').value = user.displayName || '';
           const avatar = document.querySelector('#profile-avatar');
-          const fallback = document.querySelector('#profile-avatar-fallback');
-          if (user.profileImage) {
+          const placeholder = document.querySelector('#profile-avatar-placeholder');
+          const portraitStatus = document.querySelector('#profile-portrait-status');
+          const refreshButton = document.querySelector('#refresh-portrait');
+          const answers = [user.favoriteAnimal, user.favoriteColor, user.gender];
+          const answersComplete = answers.every((value) => typeof value === 'string' && value.trim());
+          if (user.profileImage && user.profileImageGenerated) {
             avatar.src = user.profileImage;
             avatar.hidden = false;
-            fallback.hidden = true;
+            placeholder.hidden = true;
+            portraitStatus.textContent = 'สร้างจากคำตอบ 3 ข้อหลังเข้าสู่ระบบ และโหลดจากฐานข้อมูลแล้ว';
+            refreshButton.hidden = true;
           } else {
-            fallback.textContent = (user.displayName || user.email || '?').trim().charAt(0).toUpperCase();
+            avatar.removeAttribute('src');
+            avatar.hidden = true;
+            placeholder.hidden = false;
+            portraitStatus.textContent = answersComplete
+              ? 'ยังไม่มีรูป AI ที่สร้างสำเร็จ กดปุ่มด้านล่างเพื่อลองสร้างอีกครั้ง'
+              : 'กรุณาตอบคำถาม 3 ข้อในขั้นตอนสร้างโปรไฟล์ก่อน';
+            refreshButton.hidden = !answersComplete;
           }
+          document.querySelector('#answer-animal').textContent = `สัตว์: ${user.favoriteAnimal || '—'}`;
+          document.querySelector('#answer-color').textContent = `สี: ${user.favoriteColor || '—'}`;
+          document.querySelector('#answer-gender').textContent = `เพศ: ${user.gender || '—'}`;
         }
         catch (_) { window.location.assign('/login'); }
       }
+      async function loadHighestCareerTier() {
+        const name = document.querySelector('#highest-tier-name');
+        const career = document.querySelector('#highest-tier-career');
+        const progress = document.querySelector('#highest-tier-progress');
+        const image = document.querySelector('#highest-tier-image');
+        const fallback = document.querySelector('#highest-tier-fallback');
+        try {
+          const highest = (await requestJson('/api/profile/highest-achievement')).data;
+          if (!highest) {
+            name.textContent = 'ยังไม่มี Career Tier';
+            career.textContent = 'เริ่ม Career เพื่อรับ Achievement';
+            career.href = '/select-track';
+            progress.textContent = '';
+            return;
+          }
+          name.textContent = highest.achievement.name;
+          career.textContent = `Career: ${highest.career.title}`;
+          career.href = `/roadmap?career=${encodeURIComponent(highest.career.id)}`;
+          progress.textContent = `${highest.progress}% career progress · Tier unlocks at ${highest.achievement.target}%`;
+          if (highest.achievement.iconUrl) {
+            image.src = highest.achievement.iconUrl;
+            image.hidden = false;
+            fallback.hidden = true;
+            image.onerror = () => {
+              image.hidden = true;
+              fallback.hidden = false;
+            };
+          }
+        } catch (_) {
+          name.textContent = 'โหลด Career Tier ไม่สำเร็จ';
+          career.textContent = 'กลับไปที่ Roadmap';
+          progress.textContent = '';
+        }
+      }
+      document.querySelector('#refresh-portrait').addEventListener('click', async () => {
+        const button = document.querySelector('#refresh-portrait');
+        const portraitStatus = document.querySelector('#profile-portrait-status');
+        button.disabled = true;
+        portraitStatus.textContent = 'กำลังใช้คำตอบของคุณสร้างรูปโปรไฟล์ อาจใช้เวลาสักครู่...';
+        show('');
+        try {
+          await requestJson('/api/profile/refresh', { method: 'POST' });
+          await loadProfile();
+          show('สร้างและบันทึกรูปโปรไฟล์ลงฐานข้อมูลแล้ว');
+        } catch (error) {
+          portraitStatus.textContent = 'สร้างรูปยังไม่สำเร็จ คุณสามารถลองอีกครั้งได้';
+          show(error.message, true);
+        } finally {
+          button.disabled = false;
+        }
+      });
       document.querySelector('#profile-form').addEventListener('submit', async (event) => {
         event.preventDefault(); const button = document.querySelector('#save'); button.disabled = true; show('');
         try { const data = await requestJson('/api/profile', { method: 'PUT', body: JSON.stringify({displayName: document.querySelector('#display-name').value.trim()}) }); document.querySelector('#display-name').value = data.data.displayName; show('บันทึกแล้ว'); }
@@ -70,6 +177,7 @@
       });
       document.querySelector('#logout').addEventListener('click', async () => { try { await requestJson('/api/logout', {method: 'POST'}); } finally { window.location.assign('/login'); } });
       loadProfile();
+      loadHighestCareerTier();
     </script>
   </body>
 </html>

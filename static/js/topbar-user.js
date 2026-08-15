@@ -14,7 +14,7 @@
     .then(function (body) {
       if (!body || !body.ok) return;
       if (nameEl) nameEl.textContent = body.data.displayName || body.data.email || "";
-      if (profileImage && body.data.profileImage) {
+      if (profileImage && body.data.profileImage && body.data.profileImageGenerated) {
         profileImage.src = body.data.profileImage;
         profileImage.hidden = false;
         if (fallbackIcon) fallbackIcon.hidden = true;
