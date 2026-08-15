@@ -17,4 +17,26 @@
       toggle.setAttribute("aria-expanded", "false");
     }
   });
+
+  // Tuck the mascot away (small + blurred) while near the top of the
+  // page, so it doesn't sit on top of the hero on load; scrolling down
+  // a bit brings it back to full size.
+  var MINIMIZE_SCROLL_THRESHOLD = 120;
+  var ticking = false;
+
+  function applyMinimizedState() {
+    widget.classList.toggle("is-minimized", window.scrollY < MINIMIZE_SCROLL_THRESHOLD);
+    ticking = false;
+  }
+
+  applyMinimizedState();
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(applyMinimizedState);
+    },
+    { passive: true }
+  );
 })();

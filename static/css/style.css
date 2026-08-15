@@ -164,7 +164,6 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  margin-right: 2cm;
 }
 
 .topbar-search svg {
