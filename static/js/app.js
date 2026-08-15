@@ -384,7 +384,7 @@ function renderAchievements() {
         <div class="achievement-item ${achievement.unlocked ? "unlocked" : ""}"
              title="${escapeHtml(achievement.description)}">
           ${icon}
-          <strong>${escapeHtml(achievement.name)}</strong>
+          <strong>${escapeHtml(achievement.name)} <span class="achievement-target">${achievement.target}%</span></strong>
           <small>${escapeHtml(achievement.description)}</small>
         </div>`;
     })
