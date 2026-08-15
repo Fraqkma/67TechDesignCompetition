@@ -91,7 +91,7 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["data"]["id"], self.user_id)
 
-    def test_register_returns_onboarding_redirect(self) -> None:
+    def test_register_requires_login_before_onboarding(self) -> None:
         new_email = f"register-{uuid4().hex[:8]}@example.com"
         new_password = "test-pass-1234"
 
@@ -103,7 +103,20 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["data"]["redirect"], "/onboarding")
+        self.assertEqual(payload["data"]["redirect"], "/login")
+        with self.client.session_transaction() as browser_session:
+            self.assertNotIn("user_id", browser_session)
+
+        login_response = self.client.post(
+            "/api/login",
+            json={"email": new_email, "password": new_password},
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(
+            login_response.get_json()["data"]["redirect"],
+            "/onboarding",
+        )
+        self.assertEqual(self.client.get("/onboarding").status_code, 200)
 
         conn = get_db()
         try:
@@ -194,6 +207,8 @@ class ApiTests(unittest.TestCase):
         onboarding_response = self.client.get("/onboarding")
         self.assertEqual(onboarding_response.status_code, 200)
         self.assertIn(b"favoriteAnimal", onboarding_response.data)
+        self.assertIn(b'name="gender"', onboarding_response.data)
+        self.assertNotIn(b"favoriteSeason", onboarding_response.data)
 
         conn = get_db()
         try:
@@ -202,6 +217,168 @@ class ApiTests(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+
+    @patch(
+        "app.AIService.generate_profile_image",
+        return_value=b"\x89PNG\r\n\x1a\nmock-profile-image",
+    )
+    def test_onboarding_stores_and_renders_generated_profile_image(self, generate_image) -> None:
+        """The exact stored prompt must produce bytes rendered back from BYTEA."""
+
+        answers = {
+            "favoriteAnimal": "lion",
+            "favoriteColor": "magenta",
+            "gender": "หญิง",
+        }
+        response = self.client.post("/api/profile/onboarding", json=answers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["data"]["profileImageGenerated"])
+        call_kwargs = generate_image.call_args.kwargs
+        self.assertFalse(call_kwargs["allow_fallback"])
+        self.assertIn("lion", call_kwargs["prompt"])
+        self.assertIn("magenta", call_kwargs["prompt"])
+        self.assertIn("gender: female", call_kwargs["prompt"])
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_prompt, profile_picture FROM user_profiles WHERE user_id = %s",
+                    (self.user_id,),
+                )
+                stored_prompt, stored_picture = cur.fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(stored_prompt, call_kwargs["prompt"])
+        self.assertEqual(bytes(stored_picture), b"\x89PNG\r\n\x1a\nmock-profile-image")
+
+        current_user = self.client.get("/api/me").get_json()["data"]
+        self.assertTrue(current_user["profileImage"].startswith("data:image/png;base64,"))
+        self.assertTrue(current_user["profileImageGenerated"])
+        self.assertEqual(current_user["gender"], "หญิง")
+        self.assertNotIn("profilePrompt", current_user)
+
+        profile_page = self.client.get("/profile")
+        self.assertNotIn(b'id="profile-prompt"', profile_page.data)
+        self.assertIn(b'id="profile-avatar"', profile_page.data)
+
+        # Repeating onboarding and calling the refresh API must both reuse the
+        # stored portrait without invoking the image provider again.
+        repeated_onboarding = self.client.post("/api/profile/onboarding", json=answers)
+        self.assertEqual(repeated_onboarding.status_code, 409)
+        self.assertEqual(generate_image.call_count, 1)
+
+        refresh_response = self.client.post("/api/profile/refresh")
+        self.assertEqual(refresh_response.status_code, 409)
+        self.assertEqual(generate_image.call_count, 1)
+
+        # Editing an answer remains allowed, but it must not replace the image.
+        profile_update = self.client.put(
+            "/api/profile",
+            json={"favoriteColor": "navy"},
+        )
+        self.assertEqual(profile_update.status_code, 200)
+        self.assertEqual(generate_image.call_count, 1)
+
+        # Progress/achievement updates previously regenerated the portrait.
+        progress_response = self.client.post(
+            "/api/progress",
+            json={
+                "skillId": self.available_node,
+                "completed": True,
+                "careerId": self.career_id,
+            },
+        )
+        self.assertEqual(progress_response.status_code, 200)
+        self.assertEqual(generate_image.call_count, 1)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_picture FROM user_profiles WHERE user_id = %s",
+                    (self.user_id,),
+                )
+                stored_picture_after_updates = cur.fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(
+            bytes(stored_picture_after_updates),
+            b"\x89PNG\r\n\x1a\nmock-profile-image",
+        )
+
+    def test_profile_returns_only_highest_achievement_and_its_career(self) -> None:
+        """A completed career must outrank untouched careers on the profile."""
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_career_node_progress
+                        (user_id, career_id, node_id, status, completed_at)
+                    SELECT %s, cn.career_id, cn.node_id, 'completed', NOW()
+                    FROM career_nodes cn
+                    WHERE cn.career_id = %s
+                    ON CONFLICT (user_id, career_id, node_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        completed_at = EXCLUDED.completed_at
+                    """,
+                    (self.user_id, self.career_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        response = self.client.get("/api/profile/highest-achievement")
+        payload = response.get_json()["data"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["achievement"]["name"], "God")
+        self.assertEqual(payload["achievement"]["target"], 100)
+        self.assertEqual(payload["career"]["id"], self.career_id)
+        self.assertEqual(payload["progress"], 100)
+
+        profile_page = self.client.get("/profile")
+        self.assertIn(b'id="highest-tier-name"', profile_page.data)
+        self.assertIn(b"/api/profile/highest-achievement", profile_page.data)
+
+    @patch("app.AIService.generate_profile_image")
+    def test_partial_profile_answers_do_not_consume_portrait_generation(
+        self,
+        generate_image,
+    ) -> None:
+        """A partial API update must wait for all three portrait answers."""
+
+        response = self.client.put(
+            "/api/profile",
+            json={"favoriteAnimal": "lion"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        generate_image.assert_not_called()
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT favorite_animal, favorite_color, gender, profile_picture
+                    FROM user_profiles
+                    WHERE user_id = %s
+                    """,
+                    (self.user_id,),
+                )
+                animal, color, gender, picture = cur.fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(animal, "lion")
+        self.assertIsNone(color)
+        self.assertIsNone(gender)
+        self.assertIsNone(picture)
 
     def test_careers_come_from_the_database(self) -> None:
         response = self.client.get("/api/careers")
