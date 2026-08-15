@@ -266,6 +266,104 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(payload["data"]["recommendedSkill"]["id"])
         self.assertTrue(mocked_ask_chat.called)
 
+    @patch("app.AIService._request_completion", return_value="อธิบายแบบย่อได้")
+    def test_ai_chat_passes_history_to_provider(self, mocked_completion) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "แล้ว skill ถัดไปคืออะไร",
+                    "history": [
+                        {"role": "user", "content": "ช่วยอธิบาย roadmap หน่อย"}
+                    ],
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["answer"], "อธิบายแบบย่อได้")
+        messages = mocked_completion.call_args.args[0]
+        self.assertIn(
+            {"role": "user", "content": "ช่วยอธิบาย roadmap หน่อย"},
+            messages,
+        )
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertEqual(messages[-1]["content"], "แล้ว skill ถัดไปคืออะไร")
+
+    def test_ai_chat_rejects_non_list_history(self) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "สวัสดี",
+                    "history": "not-a-list",
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(payload["ok"])
+        self.assertIn("history", payload["error"])
+
+    @patch("app.AIService._request_completion", return_value="อธิบาย Skill นี้ได้เลย")
+    def test_ai_chat_with_target_skill_sends_focus_context(self, mocked_completion) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "ช่วยอธิบาย skill นี้หน่อย",
+                    "targetSkillId": self.available_node,
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["answer"], "อธิบาย Skill นี้ได้เลย")
+        self.assertEqual(
+            payload["data"]["focusedSkill"]["id"], self.available_node
+        )
+        messages = mocked_completion.call_args.args[0]
+        focus_message = next(
+            message
+            for message in messages
+            if "Focused skill" in message["content"]
+        )
+        self.assertIn(self.available_node, focus_message["content"])
+
+    def test_ai_chat_rejects_unknown_target_skill(self) -> None:
+        with patch.dict(
+            "os.environ", {"AI_API_KEY": "test-key", "OPENAI_API_KEY": ""}
+        ):
+            response = self.client.post(
+                "/api/ai/chat",
+                json={
+                    "message": "ช่วยอธิบายหน่อย",
+                    "targetSkillId": "not_a_skill",
+                    "careerId": self.career_id,
+                },
+            )
+
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "Target skill not found")
+        self.assertEqual(payload["details"], "not_a_skill")
+
     def test_plan_preview_endpoint_returns_schedule(self) -> None:
         """Schedule the DB graph for the signed-in user (no fixtures)."""
 
