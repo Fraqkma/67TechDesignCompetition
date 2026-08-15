@@ -54,9 +54,11 @@ def create_study_buddy_blueprint(
         # db_store.SCHEMA_STATEMENTS so a single call creates everything.
         db_store.ensure_schema(conn)
 
-    def load_completed(conn, user_id: int, engine: GraphEngine) -> set[str]:
+    def load_completed(
+        conn, user_id: int, career_id: int, engine: GraphEngine
+    ) -> set[str]:
         return engine.clean_completed(
-            db_store.load_completed_node_ids(conn, user_id)
+            db_store.load_completed_node_ids(conn, user_id, career_id)
         )
 
     def load_user_graph(conn, user_id: int):
@@ -67,7 +69,7 @@ def create_study_buddy_blueprint(
             raise GraphValidationError("No careers are configured")
         database = db_store.load_database(conn, career_id)
         engine = GraphEngine(database)
-        completed = load_completed(conn, user_id, engine)
+        completed = load_completed(conn, user_id, career_id, engine)
         return str(career_id), engine, completed
 
     def enrich_group(group: dict[str, Any], engine: GraphEngine):
