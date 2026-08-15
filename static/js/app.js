@@ -189,84 +189,135 @@ function renderSubjectFilters() {
   });
 }
 
-/** Build an SVG curve between the fixed center positions of two nodes. */
-function edgePath(source, target) {
-  // The stored coordinates are node centers. Moving each endpoint 72px keeps
-  // the arrow visible at the border instead of hiding it under the node card.
-  const sourceX = Number(source.position.x) + 72;
-  const sourceY = Number(source.position.y);
-  const targetX = Number(target.position.x) - 72;
-  const targetY = Number(target.position.y);
-  const middleX = sourceX + (targetX - sourceX) / 2;
+/**
+ * Orbit layout: three concentric rings by level (beginner/intermediate/
+ * advanced), skills spread evenly around each ring. Positions are computed
+ * here purely for rendering — the backend's position field (used by the
+ * old grid layout) is no longer read; status/locking rules are unaffected
+ * since those still come entirely from the server.
+ */
+const ORBIT_CENTER = 450;
+const ORBIT_TIER_RADIUS = { beginner: 170, intermediate: 285, advanced: 395 };
+const ORBIT_TIER_ORDER = ["beginner", "intermediate", "advanced"];
 
-  return `M ${sourceX} ${sourceY} C ${middleX} ${sourceY}, ${middleX} ${targetY}, ${targetX} ${targetY}`;
+function computeOrbitPositions(nodes, edges) {
+  const byTier = {};
+  ORBIT_TIER_ORDER.forEach((tier) => (byTier[tier] = []));
+  nodes.forEach((node) => {
+    if (!byTier[node.level]) byTier[node.level] = [];
+    byTier[node.level].push(node);
+  });
+
+  const positions = {};
+  const angleOf = {};
+
+  ORBIT_TIER_ORDER.forEach((tier, tierIndex) => {
+    let list = byTier[tier];
+    const radius = ORBIT_TIER_RADIUS[tier] || ORBIT_TIER_RADIUS.beginner;
+    const rotationOffset = ((tierIndex * 18 - 90) * Math.PI) / 180;
+    const count = list.length;
+
+    // Barycenter ordering: place each node near the average angle of its
+    // already-placed prerequisites (inner tiers), so edges stay short and
+    // don't crisscross the center. Nodes with no placed prerequisite keep
+    // their original order and fall after the ones that do.
+    if (tierIndex > 0 && edges && edges.length && count) {
+      const parentAngle = {};
+      list.forEach((node) => {
+        const parents = edges
+          .filter((edge) => edge.target === node.id && angleOf[edge.source] !== undefined)
+          .map((edge) => angleOf[edge.source]);
+        parentAngle[node.id] = parents.length
+          ? parents.reduce((sum, a) => sum + a, 0) / parents.length
+          : null;
+      });
+      list = list
+        .map((node, index) => ({ node, index, angle: parentAngle[node.id] }))
+        .sort((a, b) => {
+          if (a.angle === null && b.angle === null) return a.index - b.index;
+          if (a.angle === null) return 1;
+          if (b.angle === null) return -1;
+          return a.angle - b.angle;
+        })
+        .map((entry) => entry.node);
+    }
+
+    list.forEach((node, index) => {
+      const angle = count ? rotationOffset + (index / count) * Math.PI * 2 : 0;
+      positions[node.id] = {
+        x: ORBIT_CENTER + Math.cos(angle) * radius,
+        y: ORBIT_CENTER + Math.sin(angle) * radius,
+      };
+      angleOf[node.id] = angle;
+    });
+  });
+  return positions;
 }
 
-/** Draw graph edges first so every node stays clickable above them. */
+/** A gentle inward-bowed curve between two orbit positions. */
+function orbitEdgePath(a, b) {
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+  const controlX = ORBIT_CENTER + (midX - ORBIT_CENTER) * 0.85;
+  const controlY = ORBIT_CENTER + (midY - ORBIT_CENTER) * 0.85;
+  return `M ${a.x} ${a.y} Q ${controlX} ${controlY} ${b.x} ${b.y}`;
+}
+
+/** Draw the tier rings, then edges, then let renderNodes draw the planets. */
 function renderEdges() {
   const nodeIndex = Object.fromEntries(
     state.roadmap.nodes.map((node) => [node.id, node])
   );
+  const positions = computeOrbitPositions(state.roadmap.nodes, state.roadmap.edges);
+  state.orbitPositions = positions;
+
+  const rings = ORBIT_TIER_ORDER.map(
+    (tier) =>
+      `<circle class="orbit-ring" cx="${ORBIT_CENTER}" cy="${ORBIT_CENTER}" r="${ORBIT_TIER_RADIUS[tier]}"></circle>`
+  ).join("");
 
   const paths = state.roadmap.edges
     .map((edge) => {
       const source = nodeIndex[edge.source];
       const target = nodeIndex[edge.target];
-      if (!source || !target) return "";
+      const a = positions[edge.source];
+      const b = positions[edge.target];
+      if (!source || !target || !a || !b) return "";
 
       const isDimmed =
         state.selectedSubject !== "all" &&
         source.subjectId !== state.selectedSubject &&
         target.subjectId !== state.selectedSubject;
 
-      let edgeStatus = "locked";
+      let edgeStatus = "e-locked";
       if (source.status === "completed" && target.status === "completed") {
-        edgeStatus = "completed";
+        edgeStatus = "e-completed";
       } else if (source.status === "completed" && target.status === "available") {
-        edgeStatus = "available";
+        edgeStatus = "e-open";
       }
 
-      return `<path class="graph-edge ${edgeStatus} ${isDimmed ? "dimmed" : ""}"
-                    marker-end="url(#edge-arrow-${edgeStatus})"
-                    d="${edgePath(source, target)}" />`;
+      return `<path class="orbit-edge ${edgeStatus} ${isDimmed ? "dimmed" : ""}"
+                    d="${orbitEdgePath(a, b)}" />`;
     })
     .join("");
 
-  elements.edgeLayer.innerHTML = `
-    <defs>
-      <marker id="edge-arrow-locked" markerWidth="7" markerHeight="7"
-              refX="6" refY="3.5" orient="auto">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#526573"></path>
-      </marker>
-      <marker id="edge-arrow-available" markerWidth="7" markerHeight="7"
-              refX="6" refY="3.5" orient="auto">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#f8c35a"></path>
-      </marker>
-      <marker id="edge-arrow-completed" markerWidth="7" markerHeight="7"
-              refX="6" refY="3.5" orient="auto">
-        <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#55d79b"></path>
-      </marker>
-    </defs>
-    ${paths}`;
+  elements.edgeLayer.innerHTML = rings + paths;
 }
 
-function statusIcon(status) {
-  if (status === "completed") return "✓";
-  if (status === "available") return "→";
-  return "×";
-}
-
-/** Render the clickable skill nodes using coordinates from the backend. */
+/** Render the clickable skill planets on their computed orbit positions. */
 function renderNodes() {
+  const positions = state.orbitPositions || computeOrbitPositions(state.roadmap.nodes, state.roadmap.edges);
+
   elements.nodeLayer.innerHTML = state.roadmap.nodes
     .map((skill) => {
-      const subject = getSubject(skill.subjectId);
+      const pos = positions[skill.id];
+      if (!pos) return "";
       const isDimmed =
         state.selectedSubject !== "all" &&
         skill.subjectId !== state.selectedSubject;
 
       const classes = [
-        "skill-node",
+        "planet",
         skill.status,
         skill.isRecommended ? "recommended" : "",
         skill.id === state.selectedSkillId ? "selected" : "",
@@ -275,16 +326,18 @@ function renderNodes() {
         .filter(Boolean)
         .join(" ");
 
+      const leftPct = ((pos.x / 900) * 100).toFixed(3);
+      const topPct = ((pos.y / 900) * 100).toFixed(3);
+
       return `
         <button class="${classes}" type="button"
                 data-skill-id="${escapeHtml(skill.id)}"
-                style="left:${skill.position.x}px; top:${skill.position.y}px;
-                       --subject-color:${escapeHtml(subject?.color || "#91a8b5")}">
-          <span class="node-state-icon">${statusIcon(skill.status)}</span>
-          <span class="node-copy">
-            <strong title="${escapeHtml(skill.name)}">${escapeHtml(skill.shortName)}</strong>
-            <small>${escapeHtml(skill.level)} · ${skill.estimatedHours}h</small>
-          </span>
+                style="left:${leftPct}%; top:${topPct}%"
+                title="${escapeHtml(skill.name)}"
+                aria-label="${escapeHtml(skill.name)}">
+          <span class="planet-ring" aria-hidden="true"></span>
+          <span class="planet-core" aria-hidden="true"></span>
+          <span class="planet-label">${escapeHtml(skill.shortName)}</span>
         </button>`;
     })
     .join("");

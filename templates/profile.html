@@ -14,8 +14,10 @@
       main { width: min(100% - 40px, 620px); margin: 56px auto; padding: 40px; border: 1px solid #335170; border-radius: 24px; background: rgba(8, 24, 45, .92); box-shadow: 0 24px 80px #0008; }
       .eyebrow { color: #6de5ff; font-size: .8rem; letter-spacing: .15em; font-weight: 800; } h1 { margin: 12px 0 8px; } p { color: #a9bed2; line-height: 1.6; } label { display: block; margin: 24px 0 8px; font-weight: 700; } input { width: 100%; padding: 14px; border: 1px solid #41617c; border-radius: 12px; background: #091a2e; color: #eef5ff; font: inherit; } input:disabled { color: #a9bed2; } button { border: 0; border-radius: 12px; padding: 13px 18px; font: 700 1rem inherit; cursor: pointer; } #save { margin-top: 24px; background: linear-gradient(100deg, #54d7f2, #7b70ff); color: #071324; } #logout { float: right; background: transparent; border: 1px solid #a95364; color: #ffabb4; } #message { min-height: 1.3em; margin-top: 16px; color: #8de6b2; } #message.error { color: #ff9da2; }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/cosmic-theme.css') }}" />
   </head>
   <body>
+    <canvas id="cosmic-starfield-bg" aria-hidden="true"></canvas>
     <header><a href="/roadmap">← Roadmap</a><button id="logout" type="button">Logout</button></header>
     <main>
       <div class="eyebrow">LEARNER PROFILE</div>
@@ -28,6 +30,7 @@
         <div id="message" role="status"></div>
       </form>
     </main>
+    <script src="{{ url_for('static', filename='js/starfield.js') }}" defer></script>
     <script>
       const message = document.querySelector('#message');
       const show = (text, isError = false) => { message.textContent = text; message.classList.toggle('error', isError); };

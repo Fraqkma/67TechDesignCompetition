@@ -22,19 +22,37 @@
       rel="stylesheet"
       href="{{ url_for('static', filename='css/home.css') }}"
     />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/cosmic-theme.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/galaxy-view.css') }}"
+    />
   </head>
   <body>
+    <canvas id="cosmic-starfield-bg" aria-hidden="true"></canvas>
     <div class="tracks-shell">
       <header class="topbar">
-        <a class="brand" href="/" aria-label="Skill Map home">
-          <span class="brand-mark" aria-hidden="true">SM</span>
+        <a class="brand" href="/" aria-label="Enlightenment Compass home">
+          <span class="brand-mark" aria-hidden="true">EC</span>
           <span>
-            <strong>Skill Map</strong>
-            <small>Learning Roadmap Prototype</small>
+            <strong>Enlightenment Compass</strong>
+            <small>Learning Skill Tree</small>
           </span>
         </a>
 
         <div class="topbar-actions">
+          <span class="topbar-user" id="topbar-user" hidden>
+            <a class="profile-chip" href="/profile">
+              <svg class="avatar-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
+                <path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+              <span class="user-name" id="user-display-name"></span>
+            </a>
+          </span>
           <label class="topbar-search">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
@@ -51,29 +69,42 @@
       </header>
 
       <main>
-        <section class="tracks-hero">
-          <h1>เลือกสายอาชีพที่อยากดู Skill Map</h1>
-          <p>
-            เลือกเส้นทางอาชีพที่คุณสนใจ เพื่อสำรวจทักษะสำคัญ
-            ความเชื่อมโยงระหว่างวิชา และลำดับการเรียนรู้
-            ที่ช่วยให้วางแผนพัฒนาตัวเองได้ชัดเจนขึ้น
-          </p>
-        </section>
+        <div class="tracks-stage">
+          <div class="field-viewport" id="field-viewport">
+            <div class="field-track" id="field-track">
+              <p class="track-empty" id="track-loading">
+                กำลังโหลดสายอาชีพจากฐานข้อมูล...
+              </p>
+            </div>
+          </div>
 
-        <section class="track-grid" id="track-grid">
-          <p class="track-empty" id="track-loading">
-            กำลังโหลดสายอาชีพจากฐานข้อมูล...
-          </p>
-        </section>
+          <div class="tracks-overlay">
+            <section class="tracks-hero">
+              <h1>สายงานที่สนใจ</h1>
+              <p>
+                เลือกสายอาชีพที่สนใจ เพื่อดูทักษะสำคัญและเส้นทางการเรียนรู้ที่เหมาะกับคุณ
+              </p>
+            </section>
 
-        <p class="track-empty hidden" id="track-empty">
-          ไม่พบสายอาชีพที่ตรงกับคำค้นหา
-        </p>
+            <div class="tracks-overlay-bottom">
+              <p class="track-empty hidden" id="track-empty">
+                ไม่พบสายอาชีพที่ตรงกับคำค้นหา
+              </p>
+              <p class="field-hint">ลากอิสระได้ทุกทิศทาง เลื่อนวงล้อเพื่อซูมเข้า/ออก หรือใช้ปุ่มลูกศร เพื่อดูสายงานอื่น ๆ รอบตัว</p>
+            </div>
+          </div>
+        </div>
       </main>
     </div>
 
+    <script src="{{ url_for('static', filename='js/starfield.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/topbar-user.js') }}" defer></script>
     <script>
       (function () {
+        "use strict";
+
+        var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
         function escapeHtml(value) {
           return String(value)
             .replaceAll("&", "&amp;")
@@ -83,83 +114,346 @@
             .replaceAll("'", "&#039;");
         }
 
-        var grid = document.getElementById("track-grid");
-        var loading = document.getElementById("track-loading");
-        var emptyMessage = document.getElementById("track-empty");
-        var searchInput = document.getElementById("track-search");
-        var cards = [];
-
-        function cardMarkup(career) {
-          if (career.available) {
-            return (
-              '<a class="track-card active" href="/roadmap?career=' +
-              encodeURIComponent(career.id) +
-              '" data-track-name="' +
-              escapeHtml(career.title.toLowerCase()) +
-              '">' +
-              '<span class="track-status available">' +
-              '<span class="status-dot"></span> พร้อมใช้งาน</span>' +
-              '<div class="track-icon" aria-hidden="true">' +
-              escapeHtml(career.icon) +
-              "</div>" +
-              "<div>" +
-              "<h3>" +
-              escapeHtml(career.title) +
-              "</h3>" +
-              "<p>" +
-              escapeHtml(career.description || "ยังไม่มีคำอธิบาย") +
-              "</p>" +
-              "</div>" +
-              "</a>"
-            );
-          }
-          return (
-            '<div class="track-card locked" aria-disabled="true" data-track-name="' +
-            escapeHtml(career.title.toLowerCase()) +
-            '">' +
-            '<span class="track-status locked">' +
-            '<span class="status-dot"></span> เร็ว ๆ นี้</span>' +
-            '<div class="track-icon" aria-hidden="true">' +
-            escapeHtml(career.icon) +
-            "</div>" +
-            "<div>" +
-            "<h3>" +
-            escapeHtml(career.title) +
-            "</h3>" +
-            "<p>" +
-            escapeHtml(career.description || "ยังไม่มีคำอธิบาย") +
-            "</p>" +
-            "</div>" +
-            "</div>"
-          );
+        function clamp(v, lo, hi) {
+          return Math.max(lo, Math.min(hi, v));
         }
 
-        function applyFilter() {
-          var query = (searchInput.value || "").trim().toLowerCase();
-          var visibleCount = 0;
+        function lerp(a, b, t) {
+          return a + (b - a) * t;
+        }
 
-          cards.forEach(function (card) {
-            var haystack = (card.dataset.trackName || "").toLowerCase();
-            var isMatch = !query || haystack.indexOf(query) !== -1;
-            card.classList.toggle("hidden", !isMatch);
-            if (isMatch) visibleCount += 1;
+        /* ---------------- galaxy art ---------------- */
+
+        var GALAXY_HUES = [
+          { core: "255,238,214", a: "255,180,84", b: "255,150,90" },
+          { core: "214,244,250", a: "82,214,232", b: "90,180,220" },
+          { core: "255,214,224", a: "255,96,131", b: "255,120,150" },
+          { core: "232,220,255", a: "185,139,255", b: "160,120,230" },
+          { core: "250,228,200", a: "226,168,107", b: "210,150,90" }
+        ];
+
+        function renderGalaxyArt(cnv, size, idx, locked) {
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          cnv.width = size * dpr;
+          cnv.height = size * dpr;
+          cnv.style.width = size + "px";
+          cnv.style.height = size + "px";
+          var g = cnv.getContext("2d");
+          g.setTransform(dpr, 0, 0, dpr, 0, 0);
+          g.clearRect(0, 0, size, size);
+
+          var hue = GALAXY_HUES[idx % GALAXY_HUES.length];
+          var satMul = locked ? 0.32 : 1;
+          var coreColor = locked ? "222,218,236" : hue.core;
+          var armA = locked ? "150,146,170" : hue.a;
+          var armB = locked ? "118,114,138" : hue.b;
+
+          g.save();
+          g.translate(size / 2, size / 2);
+          g.rotate(((idx * 47) % 360) * Math.PI / 180);
+          g.scale(1, 0.58);
+
+          var coreR = size * 0.2;
+          var coreGrad = g.createRadialGradient(0, 0, 0, 0, 0, coreR);
+          coreGrad.addColorStop(0, "rgba(" + coreColor + "," + (0.9 * satMul).toFixed(2) + ")");
+          coreGrad.addColorStop(0.4, "rgba(" + armA + "," + (0.5 * satMul).toFixed(2) + ")");
+          coreGrad.addColorStop(1, "rgba(" + armA + ",0)");
+          g.fillStyle = coreGrad;
+          g.beginPath();
+          g.arc(0, 0, coreR, 0, Math.PI * 2);
+          g.fill();
+
+          var arms = 2, pointsPerArm = 170;
+          for (var a = 0; a < arms; a++) {
+            for (var i = 0; i < pointsPerArm; i++) {
+              var t = i / pointsPerArm;
+              var angle = t * Math.PI * 3.2 + a * Math.PI + (Math.random() - 0.5) * 0.3;
+              var radius = Math.pow(t, 0.72) * size * 0.47;
+              var jitter = (Math.random() - 0.5) * (10 + t * 30);
+              var px = Math.cos(angle) * radius - Math.sin(angle) * jitter;
+              var py = Math.sin(angle) * radius + Math.cos(angle) * jitter;
+              var fade = (1 - t) * 0.75 + 0.12;
+              var rr = Math.random();
+              var col = rr < 0.07 ? "130,220,235" : (rr < 0.13 ? "255,140,165" : armB);
+              var alpha = fade * (0.3 + Math.random() * 0.5) * satMul;
+              var dotR = (1 - t) * 1.5 + 0.35;
+              g.beginPath();
+              g.fillStyle = "rgba(" + col + "," + alpha.toFixed(2) + ")";
+              g.arc(px, py, dotR, 0, Math.PI * 2);
+              g.fill();
+            }
+          }
+
+          for (var h = 0; h < 50; h++) {
+            var ha = Math.random() * Math.PI * 2;
+            var hr = size * 0.42 + Math.random() * size * 0.14;
+            var hx = Math.cos(ha) * hr;
+            var hy = Math.sin(ha) * hr;
+            g.beginPath();
+            g.fillStyle = "rgba(" + armB + "," + (0.12 * satMul * Math.random()).toFixed(2) + ")";
+            g.arc(hx, hy, 0.8, 0, Math.PI * 2);
+            g.fill();
+          }
+
+          g.restore();
+        }
+
+        /* ---------------- field state ---------------- */
+
+        var viewport = document.getElementById("field-viewport");
+        var track = document.getElementById("field-track");
+        var searchInput = document.getElementById("track-search");
+        var emptyMessage = document.getElementById("track-empty");
+
+        var CAREERS = [];
+        var galaxyEls = [];
+        var searchQuery = "";
+
+        var offsetX = 0, offsetY = 0;
+        var boundsMinX = 0, boundsMaxX = 0, boundsMinY = 0, boundsMaxY = 0;
+        var dragging = false, dragMoved = false;
+        var dragStartX = 0, dragStartY = 0, dragStartOffsetX = 0, dragStartOffsetY = 0;
+        var moveSamples = [];
+        var velX = 0, velY = 0, isInertia = false;
+
+        /* Camera zoom: applied as a scale() on #field-track itself, on top
+           of the per-galaxy distance-based scale already computed in
+           renderPositions, so world-space pan/bounds math stays unchanged. */
+        var zoomLevel = 1;
+        var MIN_ZOOM = 0.55, MAX_ZOOM = 1.7;
+        var activePointers = new Map();
+        var pinchStartDist = 0, pinchStartZoom = 1;
+
+        function applyZoom(next) {
+          zoomLevel = clamp(next, MIN_ZOOM, MAX_ZOOM);
+          track.style.transform = "scale(" + zoomLevel.toFixed(3) + ")";
+        }
+
+        function pinchDistance() {
+          var pts = Array.from(activePointers.values());
+          var dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+          return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        /* Sunflower/golden-angle spiral so any number of careers spaces out
+           evenly with no overlap, unlike a fixed hand-placed layout. */
+        function layoutPositions(n) {
+          var positions = [];
+          var golden = Math.PI * (3 - Math.sqrt(5));
+          var spacing = 520;
+          for (var i = 0; i < n; i++) {
+            if (i === 0) {
+              positions.push({ x: 0, y: 0 });
+              continue;
+            }
+            var r = spacing * 0.62 * Math.sqrt(i);
+            var a = i * golden;
+            positions.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+          }
+          return positions;
+        }
+
+        function computeBounds() {
+          var xs = CAREERS.map(function (c) { return c.pos.x; });
+          var ys = CAREERS.map(function (c) { return c.pos.y; });
+          var slack = 420;
+          boundsMinX = -Math.max.apply(null, xs) - slack;
+          boundsMaxX = -Math.min.apply(null, xs) + slack;
+          boundsMinY = -Math.max.apply(null, ys) - slack;
+          boundsMaxY = -Math.min.apply(null, ys) + slack;
+        }
+
+        function buildField() {
+          track.innerHTML = "";
+          galaxyEls = [];
+
+          CAREERS.forEach(function (c, i) {
+            var el = document.createElement("div");
+            el.className = "galaxy " + (c.available ? "unlocked" : "locked");
+            el.dataset.index = i;
+
+            var statusText = c.available ? "พร้อมเรียน" : "เร็ว ๆ นี้";
+            var countText = c.available ? (c.nodeCount + " ทักษะ") : "กำลังจะเปิดสอน";
+
+            el.innerHTML =
+              '<div class="galaxy-art">' +
+              '<canvas class="galaxy-canvas"></canvas>' +
+              '<div class="galaxy-focus-ring" aria-hidden="true"></div>' +
+              "</div>" +
+              '<div class="galaxy-plate hud-frame">' +
+              '<span class="galaxy-name">' + escapeHtml(c.title) + "</span>" +
+              '<span class="galaxy-status">' + statusText + "</span>" +
+              '<span class="galaxy-code">' + countText + "</span>" +
+              (c.available ? '<span class="galaxy-cta">แตะเพื่อเข้าสู่บทเรียน</span>' : "") +
+              "</div>";
+
+            track.appendChild(el);
+            renderGalaxyArt(el.querySelector(".galaxy-canvas"), 220, i, !c.available);
+            galaxyEls.push({ el: el, art: el.querySelector(".galaxy-art"), data: c });
           });
 
-          emptyMessage.classList.toggle("hidden", visibleCount !== 0);
+          computeBounds();
+          offsetX = -CAREERS[0].pos.x;
+          offsetY = -CAREERS[0].pos.y;
         }
 
-        function renderCareers(careers) {
-          grid.innerHTML = careers.map(cardMarkup).join("");
-          cards = Array.prototype.slice.call(
-            grid.querySelectorAll(".track-card")
-          );
-          loading.classList.add("hidden");
-          emptyMessage.classList.add("hidden");
-          searchInput.disabled = false;
+        function renderPositions() {
+          var query = (searchQuery || "").trim().toLowerCase();
+          var nearestIdx = -1, nearestDist = Infinity;
+          var anyMatch = !query;
+
+          for (var i = 0; i < galaxyEls.length; i++) {
+            var c = galaxyEls[i].data;
+            var dx = c.pos.x + offsetX;
+            var dy = c.pos.y + offsetY;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            var t = clamp(dist / 560, 0, 1);
+            var scale = lerp(1.05, 0.42, t);
+            var opac = lerp(1, 0.2, t);
+            var artBlur = t <= 0.45 ? 0 : lerp(0, 1.6, (t - 0.45) / 0.55);
+            var isMatch = !query || c.title.toLowerCase().indexOf(query) !== -1;
+            if (isMatch) anyMatch = true;
+            if (query) opac *= isMatch ? 1 : 0.1;
+
+            var el = galaxyEls[i].el;
+            el.style.transform = "translate(-50%,-50%) translate(" + dx.toFixed(1) + "px," + dy.toFixed(1) + "px) scale(" + scale.toFixed(3) + ")";
+            el.style.opacity = opac.toFixed(3);
+            el.style.zIndex = String(Math.round((1 - t) * 100));
+            galaxyEls[i].art.style.filter = artBlur > 0.05 ? "blur(" + artBlur.toFixed(2) + "px)" : "none";
+
+            if (dist < nearestDist) { nearestDist = dist; nearestIdx = i; }
+          }
+
+          for (var j = 0; j < galaxyEls.length; j++) {
+            galaxyEls[j].el.classList.toggle("is-center", j === nearestIdx && nearestDist < 130);
+          }
+
+          emptyMessage.classList.toggle("hidden", anyMatch);
         }
 
-        searchInput.addEventListener("input", applyFilter);
+        function fieldLoop() {
+          if (isInertia) {
+            offsetX = clamp(offsetX + velX, boundsMinX, boundsMaxX);
+            offsetY = clamp(offsetY + velY, boundsMinY, boundsMaxY);
+            if (offsetX <= boundsMinX || offsetX >= boundsMaxX) velX = 0;
+            if (offsetY <= boundsMinY || offsetY >= boundsMaxY) velY = 0;
+            velX *= 0.93;
+            velY *= 0.93;
+            if (Math.abs(velX) < 0.03 && Math.abs(velY) < 0.03) isInertia = false;
+          }
+          if (CAREERS.length) renderPositions();
+          requestAnimationFrame(fieldLoop);
+        }
+
+        function pointFromEvent(e) {
+          if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          return { x: e.clientX, y: e.clientY };
+        }
+
+        function onPointerDown(e) {
+          if (!CAREERS.length) return;
+          activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+          if (activePointers.size === 2) {
+            dragging = false;
+            isInertia = false;
+            pinchStartDist = pinchDistance();
+            pinchStartZoom = zoomLevel;
+            return;
+          }
+          if (activePointers.size > 2) return;
+
+          dragging = true;
+          dragMoved = false;
+          viewport.classList.add("dragging");
+          var p = pointFromEvent(e);
+          dragStartX = p.x; dragStartY = p.y;
+          dragStartOffsetX = offsetX; dragStartOffsetY = offsetY;
+          moveSamples = [{ x: p.x, y: p.y, t: performance.now() }];
+          isInertia = false;
+        }
+
+        function onPointerMove(e) {
+          if (activePointers.has(e.pointerId)) {
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          }
+
+          if (activePointers.size === 2) {
+            var dist = pinchDistance();
+            if (pinchStartDist > 0) applyZoom(pinchStartZoom * (dist / pinchStartDist));
+            return;
+          }
+
+          if (!dragging) return;
+          var p = pointFromEvent(e);
+          var dx = p.x - dragStartX, dy = p.y - dragStartY;
+          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+          offsetX = clamp(dragStartOffsetX + dx, boundsMinX, boundsMaxX);
+          offsetY = clamp(dragStartOffsetY + dy, boundsMinY, boundsMaxY);
+          moveSamples.push({ x: p.x, y: p.y, t: performance.now() });
+          if (moveSamples.length > 6) moveSamples.shift();
+        }
+
+        function onPointerUp(e) {
+          activePointers.delete(e.pointerId);
+          if (activePointers.size < 2) pinchStartDist = 0;
+
+          if (!dragging) return;
+          dragging = false;
+          viewport.classList.remove("dragging");
+          if (moveSamples.length >= 2 && !reduceMotion) {
+            var a = moveSamples[0], b = moveSamples[moveSamples.length - 1];
+            var dt = Math.max(1, b.t - a.t);
+            velX = (b.x - a.x) / dt * 16;
+            velY = (b.y - a.y) / dt * 16;
+            if (Math.abs(velX) > 0.05 || Math.abs(velY) > 0.05) isInertia = true;
+          }
+        }
+
+        viewport.addEventListener("pointerdown", onPointerDown);
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", onPointerUp);
+        window.addEventListener("pointercancel", onPointerUp);
+
+        viewport.addEventListener("wheel", function (e) {
+          if (!CAREERS.length) return;
+          e.preventDefault();
+          applyZoom(zoomLevel * (1 - e.deltaY * 0.0015));
+          if (e.deltaX) {
+            offsetX = clamp(offsetX - e.deltaX, boundsMinX, boundsMaxX);
+          }
+          isInertia = false;
+        }, { passive: false });
+
+        document.addEventListener("keydown", function (e) {
+          if (!CAREERS.length) return;
+          if (document.activeElement === searchInput) return;
+          var step = 90;
+          if (e.key === "ArrowUp") offsetY = clamp(offsetY + step, boundsMinY, boundsMaxY);
+          else if (e.key === "ArrowDown") offsetY = clamp(offsetY - step, boundsMinY, boundsMaxY);
+          else if (e.key === "ArrowLeft") offsetX = clamp(offsetX + step, boundsMinX, boundsMaxX);
+          else if (e.key === "ArrowRight") offsetX = clamp(offsetX - step, boundsMinX, boundsMaxX);
+          else return;
+          e.preventDefault();
+          isInertia = false;
+        });
+
+        track.addEventListener("click", function (e) {
+          if (dragMoved) { dragMoved = false; return; }
+          var el = e.target.closest(".galaxy.unlocked");
+          if (!el) return;
+          var idx = Number(el.dataset.index);
+          var c = CAREERS[idx];
+          if (!c) return;
+          window.location.href = "/roadmap?career=" + encodeURIComponent(c.id);
+        });
+
+        searchInput.addEventListener("input", function (e) {
+          searchQuery = e.target.value || "";
+        });
         searchInput.disabled = true;
+
+        requestAnimationFrame(fieldLoop);
 
         fetch("/api/careers", { credentials: "same-origin" })
           .then(function (response) {
@@ -171,11 +465,20 @@
             if (!payload || payload.ok === false) {
               throw new Error((payload && payload.error) || "Could not load careers");
             }
-            renderCareers(payload.data || []);
+            var list = payload.data || [];
+            if (!list.length) {
+              track.innerHTML = '<p class="track-empty">ยังไม่มีสายอาชีพในระบบ</p>';
+              return;
+            }
+            var positions = layoutPositions(list.length);
+            CAREERS = list.map(function (c, i) {
+              return Object.assign({}, c, { pos: positions[i] });
+            });
+            buildField();
+            searchInput.disabled = false;
           })
           .catch(function (error) {
-            loading.textContent = "ไม่สามารถโหลดสายอาชีพได้: " + error.message;
-            loading.classList.remove("hidden");
+            track.innerHTML = '<p class="track-empty">ไม่สามารถโหลดสายอาชีพได้: ' + escapeHtml(error.message) + "</p>";
           });
       })();
     </script>

@@ -16,10 +16,12 @@
       button { width: 100%; margin-top: 26px; border: 0; border-radius: 12px; padding: 14px; background: linear-gradient(100deg, #54d7f2, #7b70ff); color: #071324; font: 800 1rem inherit; cursor: pointer; } button:disabled { opacity: .6; cursor: wait; }
       #error { min-height: 1.3em; color: #ff9da2; margin-top: 16px; } footer { margin-top: 26px; color: #a9bed2; text-align: center; } a { color: #75e6ff; font-weight: 700; }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/cosmic-theme.css') }}" />
   </head>
   <body>
+    <canvas id="cosmic-starfield-bg" aria-hidden="true"></canvas>
     <main>
-      <div class="brand">SKILL MAP</div>
+      <div class="brand">ENLIGHTENMENT COMPASS</div>
       <h1>สร้างบัญชีผู้เรียน</h1>
       <p>บันทึกความคืบหน้าของคุณแยกตามบัญชี และเรียนต่อจาก Roadmap ของตัวเอง</p>
       <form id="register-form">
@@ -34,6 +36,7 @@
       </form>
       <footer>มีบัญชีอยู่แล้ว? <a href="/login">เข้าสู่ระบบ</a></footer>
     </main>
+    <script src="{{ url_for('static', filename='js/starfield.js') }}" defer></script>
     <script>
       const form = document.querySelector('#register-form');
       const error = document.querySelector('#error');
