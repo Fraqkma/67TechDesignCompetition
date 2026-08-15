@@ -99,7 +99,10 @@
           const answers = [user.favoriteAnimal, user.favoriteColor, user.gender];
           const answersComplete = answers.every((value) => typeof value === 'string' && value.trim());
           if (user.profileImage && user.profileImageGenerated) {
-            avatar.src = '/api/profile/avatar';
+            // Per-account cache key: the URL is shared by every account, so the
+            // user id must bust the browser cache or another account's cached
+            // portrait could be shown here.
+            avatar.src = '/api/profile/avatar?u=' + encodeURIComponent(user.id);
             avatar.hidden = false;
             placeholder.hidden = true;
             portraitStatus.textContent = 'สร้างจากคำตอบ 3 ข้อหลังเข้าสู่ระบบ และโหลดจากฐานข้อมูลแล้ว';
