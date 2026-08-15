@@ -50,8 +50,9 @@ def create_study_buddy_blueprint(
         return user_id
 
     def ensure_tables(conn) -> None:
+        # All DDL (including the social tables) is consolidated in
+        # db_store.SCHEMA_STATEMENTS so a single call creates everything.
         db_store.ensure_schema(conn)
-        social_store.ensure_social_schema(conn)
 
     def load_completed(conn, user_id: int, engine: GraphEngine) -> set[str]:
         return engine.clean_completed(
