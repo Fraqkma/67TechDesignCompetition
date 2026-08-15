@@ -4,9 +4,8 @@ from app import app
 
 
 if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=True,
-        use_reloader=False,
-    )
+    # Production launcher — matches app.py: threaded waitress server so slow
+    # requests (long AI calls) don't block other users.
+    from waitress import serve
+
+    serve(app, host="127.0.0.1", port=5000, threads=8)
