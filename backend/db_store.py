@@ -251,9 +251,10 @@ SUBJECT_SEEDS: list[tuple[int, str, str, str]] = [
 
 RANK_SEEDS: list[tuple[int, str, str, str, int]] = [
     (1, "01", "Starter", "เริ่มเรียน Skill แรกเพื่อพัฒนา Rank", 0),
-    (2, "02", "Core Learner", "มีพื้นฐานและเริ่มเรียนวิชาหลัก", 30),
-    (3, "03", "System Builder", "กำลังเชื่อมฮาร์ดแวร์และซอฟต์แวร์", 60),
-    (4, "04", "Career Ready", "พร้อมต่อยอดสู่โปรเจกต์จริง", 90),
+    (2, "02", "Core Learner", "มีพื้นฐานและเริ่มเรียนวิชาหลัก", 25),
+    (3, "03", "System Builder", "กำลังเชื่อมฮาร์ดแวร์และซอฟต์แวร์", 50),
+    (4, "04", "Career Ready", "พร้อมต่อยอดสู่โปรเจกต์จริง", 75),
+    (5, "05", "Career Master", "เรียนครบทุกวิชาในเส้นทาง", 100),
 ]
 
 
@@ -284,14 +285,18 @@ def seed_subjects_and_nodes(conn) -> None:
 
 
 def seed_ranks(conn) -> None:
-    """Insert the rank catalog (idempotent)."""
+    """Insert or refresh the rank catalog (idempotent)."""
     with conn.cursor() as cur:
         for rank_id, code, name, hint, min_progress in RANK_SEEDS:
             cur.execute(
                 """
                 INSERT INTO ranks (id, code, name, hint, min_progress)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
+                ON CONFLICT (id) DO UPDATE SET
+                    code = EXCLUDED.code,
+                    name = EXCLUDED.name,
+                    hint = EXCLUDED.hint,
+                    min_progress = EXCLUDED.min_progress
                 """,
                 (rank_id, code, name, hint, min_progress),
             )
@@ -495,6 +500,9 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
         ) = row
         depth = depths[node_id]
         level = _level_for_depth(depth)
+        # Progress weight follows difficulty so harder skills move the
+        # career bar more than easy ones (1 = beginner … 5 = expert).
+        difficulty = min(5, depth + 1)
         skills.append(
             {
                 "id": str(node_id),
@@ -507,10 +515,8 @@ def load_database(conn, career_id: int | None = None) -> dict[str, Any]:
                     else first_subject_id
                 ),
                 "level": level,
-                "difficulty": min(5, depth + 1),
-                "weight": {"beginner": 1, "intermediate": 2, "advanced": 3}[
-                    level
-                ],
+                "difficulty": difficulty,
+                "weight": difficulty,
                 "required": True if is_mandatory is None else bool(is_mandatory),
                 "careerRelevance": (
                     career_relevance

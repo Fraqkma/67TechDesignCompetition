@@ -46,11 +46,12 @@ class DbStoreTests(unittest.TestCase):
         conn = get_db()
         try:
             self.assertEqual(load_rank(conn, 0)["code"], "01")
-            self.assertEqual(load_rank(conn, 29)["code"], "01")
-            self.assertEqual(load_rank(conn, 30)["code"], "02")
-            self.assertEqual(load_rank(conn, 60)["code"], "03")
-            self.assertEqual(load_rank(conn, 100)["code"], "04")
-            for progress in (0, 30, 60, 90):
+            self.assertEqual(load_rank(conn, 24)["code"], "01")
+            self.assertEqual(load_rank(conn, 25)["code"], "02")
+            self.assertEqual(load_rank(conn, 50)["code"], "03")
+            self.assertEqual(load_rank(conn, 75)["code"], "04")
+            self.assertEqual(load_rank(conn, 100)["code"], "05")
+            for progress in (0, 25, 50, 75, 100):
                 rank = load_rank(conn, progress)
                 self.assertTrue(rank["name"])
                 self.assertIsInstance(rank["hint"], str)
