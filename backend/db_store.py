@@ -434,6 +434,33 @@ def seed_ranks(conn) -> None:
             )
 
 
+# =========================================================
+# Meme questions (catalog seed)
+# =========================================================
+
+MEME_QUESTION_SEEDS: list[tuple[int, str, int]] = [
+    (1, "สัตว์ที่ชอบ", 1),
+    (2, "สีที่ชอบ", 2),
+    (3, "ฤดูที่ชอบ", 3),
+]
+
+
+def seed_meme_questions(conn) -> None:
+    """Insert the meme question catalog (idempotent)."""
+    with conn.cursor() as cur:
+        for question_id, question_text, question_order in MEME_QUESTION_SEEDS:
+            cur.execute(
+                """
+                INSERT INTO meme_questions (id, question_text, question_order)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    question_text = EXCLUDED.question_text,
+                    question_order = EXCLUDED.question_order
+                """,
+                (question_id, question_text, question_order),
+            )
+
+
 def ensure_schema(conn) -> None:
     """Create every table used by the app (idempotent)."""
     with conn.cursor() as cur:
@@ -442,6 +469,7 @@ def ensure_schema(conn) -> None:
     seed_achievements(conn)
     seed_subjects_and_nodes(conn)
     seed_ranks(conn)
+    seed_meme_questions(conn)
 
 
 # =========================================================
