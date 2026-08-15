@@ -310,6 +310,110 @@ class ApiTests(unittest.TestCase):
             b"\x89PNG\r\n\x1a\nmock-profile-image",
         )
 
+    @patch(
+        "app.AIService.generate_profile_image",
+        return_value=b"\x89PNG\r\n\x1a\nmock-profile-image",
+    )
+    def test_profile_avatar_never_reuses_another_accounts_cached_portrait(self, generate_image) -> None:
+        """The shared avatar URL must force revalidation per account.
+
+        /api/profile/avatar is the same URL for every account, so a long
+        max-age would make the browser show the previous account's portrait
+        after switching users. The response must always be revalidated via
+        ETag instead of reused from cache.
+        """
+
+        answers = {
+            "favoriteAnimal": "lion",
+            "favoriteColor": "magenta",
+            "gender": "หญิง",
+        }
+        onboarding = self.client.post("/api/profile/onboarding", json=answers)
+        self.assertEqual(onboarding.status_code, 200)
+
+        # The frontend keys the browser cache per account with ?u=<id>; the
+        # server must accept the cache-buster query string.
+        avatar = self.client.get(f"/api/profile/avatar?u={self.user_id}")
+        self.assertEqual(avatar.status_code, 200)
+        cache_control = avatar.headers.get("Cache-Control", "")
+        self.assertIn("no-cache", cache_control)
+        self.assertNotIn("max-age", cache_control)
+        first_etag = avatar.headers.get("ETag")
+        self.assertTrue(first_etag)
+
+        # Same account revalidates with its own ETag and gets a fast 304.
+        revalidated = self.client.get(
+            "/api/profile/avatar",
+            headers={"If-None-Match": first_etag},
+        )
+        self.assertEqual(revalidated.status_code, 304)
+
+        # A second account with a different stored portrait must never receive
+        # the first account's 304: it gets its own image as a fresh 200.
+        second_email = f"other-{uuid4().hex[:8]}@example.com"
+        second_id = None
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (uid, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        uuid4().hex[:12],
+                        second_email,
+                        bcrypt.hashpw(
+                            self.test_password.encode("utf-8"),
+                            bcrypt.gensalt(),
+                        ).decode("utf-8"),
+                    ),
+                )
+                second_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles
+                        (user_id, display_name, profile_prompt, profile_picture)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        profile_prompt = EXCLUDED.profile_prompt,
+                        profile_picture = EXCLUDED.profile_picture
+                    """,
+                    (
+                        second_id,
+                        "Second User",
+                        "second portrait prompt",
+                        b"\x89PNG\r\n\x1a\nanother-portrait",
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        try:
+            with self.client.session_transaction() as session:
+                session["user_id"] = second_id
+
+            second_avatar = self.client.get(
+                "/api/profile/avatar",
+                headers={"If-None-Match": first_etag},
+            )
+            self.assertEqual(second_avatar.status_code, 200)
+            self.assertEqual(second_avatar.data, b"\x89PNG\r\n\x1a\nanother-portrait")
+            self.assertNotEqual(second_avatar.headers.get("ETag"), first_etag)
+        finally:
+            conn = get_db()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM users WHERE id = %s",
+                        (second_id,),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
     def test_profile_returns_only_highest_achievement_and_its_career(self) -> None:
         """A completed career must outrank untouched careers on the profile."""
 

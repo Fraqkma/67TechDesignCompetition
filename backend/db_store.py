@@ -531,8 +531,7 @@ def seed_ranks(conn) -> None:
 
 
 SCHEMA_LOCK = threading.RLock()
-
-
+_schema_initialized = False
 # =========================================================
 # Meme questions (catalog seed)
 # =========================================================
@@ -561,13 +560,20 @@ def seed_meme_questions(conn) -> None:
 
 
 def ensure_schema(conn) -> None:
-    """Create every table used by the app (idempotent).
+    """Create every table used by the app (idempotent, once per process).
 
-    PostgreSQL DDL acquires table locks, so schema bootstrapping is serialized
-    across requests to avoid deadlocks when multiple endpoints initialize the
-    database concurrently during startup or first-login flows.
+    The previous version re-ran dozens of DDL statements plus the legacy
+    progress migration and catalog seeds on *every* request, so every API call
+    paid for schema bootstrapping.  After the first successful run in this
+    process the expensive work is skipped and the call becomes a no-op.
+    PostgreSQL DDL acquires table locks, so bootstrapping stays serialized via
+    ``SCHEMA_LOCK`` to avoid deadlocks when concurrent requests initialize the
+    database during startup or first-login flows.
     """
+    global _schema_initialized
     with SCHEMA_LOCK:
+        if _schema_initialized:
+            return
         with conn.cursor() as cur:
             for statement in SCHEMA_STATEMENTS:
                 cur.execute(statement)
@@ -599,6 +605,7 @@ def ensure_schema(conn) -> None:
         seed_subjects_and_nodes(conn)
         seed_ranks(conn)
         seed_meme_questions(conn)
+        _schema_initialized = True
 
 
 # =========================================================

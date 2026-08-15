@@ -9,14 +9,25 @@ engine stays the single source of truth for prerequisites.
 from __future__ import annotations
 
 import base64
+import gzip
+import hashlib
 import os
 import re
+import threading
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    render_template,
+    request,
+    send_from_directory,
+)
 
 try:
     from dotenv import load_dotenv
@@ -25,6 +36,7 @@ except ImportError:  # pragma: no cover - fallback for minimal environments
         return False
 import bcrypt
 import psycopg2
+from psycopg2 import pool as psycopg2_pool
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session
 
@@ -78,15 +90,63 @@ if _missing_db_keys:
     )
 
 
-def get_db():
-    """Create a PostgreSQL connection.
+# =========================================================
+# In-memory graph cache
+# =========================================================
 
-    ``connect_timeout`` keeps an unreachable host (for example a database on
-    another network, which is the usual cause of the page hanging on the
-    loading screen) from blocking requests for minutes: the connection now
-    fails after a few seconds and returns a readable error.
+# The skill graph (careers, nodes, prerequisites) only changes through direct
+# database edits, and ``GraphEngine`` instances are read-only after
+# construction, so the same engine can be shared safely across requests.  A
+# short TTL keeps the roadmap snappy while still picking up data changes
+# within about half a minute.
+_ENGINE_CACHE_TTL_SECONDS = 30
+_engine_cache: dict[int | None, tuple[float, tuple[dict[str, Any], Any]]] = {}
+_engine_cache_lock = threading.Lock()
+
+
+class _PooledConnection:
+    """Wrap a psycopg2 connection so ``close()`` returns it to the pool.
+
+    Every existing call site does ``conn = get_db()`` and later
+    ``conn.close()``.  Returning the connection to the pool instead of really
+    closing it removes the ~150-250 ms TCP/TLS setup cost of talking to the
+    remote PostgreSQL server on every request.  All other attributes are
+    delegated to the real connection, so ``cursor()``, ``commit()``,
+    ``rollback()`` and ``with conn.cursor()`` keep working unchanged.
     """
-    return psycopg2.connect(connect_timeout=5, **DB_CONFIG)
+
+    def __init__(self, connection, pool):
+        self._connection = connection
+        self._pool = pool
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def close(self):
+        """Return the underlying connection to the pool, transaction-free."""
+        if self._connection is None:
+            return
+        connection = self._connection
+        self._connection = None
+        connection.rollback()  # Discard any open transaction before reuse.
+        self._pool.putconn(connection)
+
+
+# The database lives on another host (SERVER_IP), so opening a brand-new
+# connection per request is expensive (measured at ~150-250 ms each).
+# ``ThreadedConnectionPool`` reuses connections across requests; ``maxconn`` is
+# generous because a request can hold its connection while a slow AI portrait
+# generation runs.  ``connect_timeout`` keeps an unreachable host from blocking
+# requests for minutes: new connections now fail after a few seconds and return
+# a readable error instead of hanging the loading screen.
+_db_pool = psycopg2_pool.ThreadedConnectionPool(
+    1, 30, connect_timeout=5, **DB_CONFIG
+)
+
+
+def get_db():
+    """Return a reusable PostgreSQL connection from the connection pool."""
+    return _PooledConnection(_db_pool.getconn(), _db_pool)
 
 
 # =========================================================
@@ -103,6 +163,47 @@ def create_app(database_path: str | None = None) -> Flask:
     app = Flask(__name__)
 
     app.config["JSON_SORT_KEYS"] = False
+
+    # Let browsers cache CSS/JS for a week.  In debug mode Flask overrides
+    # this with no-cache; the production launcher (waitress) runs without
+    # debug so the header is actually sent.
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 7
+
+    @app.after_request
+    def compress_response(response):
+        """gzip JSON/text responses when the browser supports it.
+
+        The remote database is the slow part of every request, but large JSON
+        payloads (e.g. the roadmap or a base64 profile image) add significant
+        transfer time too.  Binary responses (images), small bodies and the
+        avatar endpoint's 304/ETag dance are left untouched.
+        """
+        if "gzip" not in request.headers.get("Accept-Encoding", ""):
+            return response
+        if response.status_code < 200 or response.status_code >= 300:
+            return response
+        if response.direct_passthrough:
+            return response
+        content_type = response.content_type or ""
+        if not (
+            content_type.startswith("application/json")
+            or content_type.startswith("text/")
+            or content_type.startswith("application/javascript")
+            or content_type.endswith("+json")
+        ):
+            return response
+        data = response.get_data()
+        if len(data) < 1024:
+            return response
+        compressed = gzip.compress(data, compresslevel=4)
+        response.set_data(compressed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Vary"] = "Accept-Encoding"
+        response.headers["Content-Length"] = str(len(compressed))
+        # ETag was computed over the uncompressed body; drop it to avoid
+        # conditional-request mismatches.
+        response.headers.pop("ETag", None)
+        return response
 
     # Flask session
     app.secret_key = os.getenv(
@@ -177,18 +278,34 @@ def create_app(database_path: str | None = None) -> Flask:
 
     def load_engine(
         career_id: int | None = None,
+        conn=None,
     ) -> tuple[dict[str, Any], GraphEngine, set[str]]:
-        """Load one career's graph from PostgreSQL."""
-        conn = get_db()
+        """Load one career's graph, cached in memory for a short TTL.
+
+        ``conn`` lets a caller reuse the request's single connection instead of
+        opening yet another one; when omitted the helper opens and closes its
+        own connection exactly like before.
+        """
+        cached = _engine_cache.get(career_id)
+        if cached is not None:
+            loaded_at, (database, engine) = cached
+            if time.monotonic() - loaded_at < _ENGINE_CACHE_TTL_SECONDS:
+                return database, engine, set()
+
+        owns_conn = conn is None
+        conn = conn or get_db()
         try:
-            # Ensure tables/columns exist (idempotent) so the graph loader
-            # always sees the current schema, even on a fresh database.
+            # Ensure tables/columns exist (idempotent, runs once per process)
+            # so the graph loader always sees the current schema.
             db_store.ensure_schema(conn)
             database = db_store.load_database(conn, career_id)
             engine = GraphEngine(database)
+            with _engine_cache_lock:
+                _engine_cache[career_id] = (time.monotonic(), (database, engine))
             return database, engine, set()
         finally:
-            conn.close()
+            if owns_conn:
+                conn.close()
 
     def attach_user_context(
         conn,
@@ -290,13 +407,16 @@ def create_app(database_path: str | None = None) -> Flask:
     def resolve_career_id(
         career_param: str | None,
         user_id: int | None,
+        conn=None,
     ) -> int:
         """Resolve which career's graph a route should load.
 
         Prefer an explicit ``?career=`` id, then the user's saved career,
-        then the first career in the database.
+        then the first career in the database.  ``conn`` lets a caller reuse
+        the request's single connection instead of opening another one.
         """
-        conn = get_db()
+        owns_conn = conn is None
+        conn = conn or get_db()
         try:
             if career_param is not None:
                 try:
@@ -317,32 +437,67 @@ def create_app(database_path: str | None = None) -> Flask:
                 raise GraphValidationError("No careers are configured")
             return career_id
         finally:
-            conn.close()
+            if owns_conn:
+                conn.close()
 
     def load_completed_for_user(
-        user_id: int, career_id: int, engine: GraphEngine
+        user_id: int, career_id: int, engine: GraphEngine, conn=None
     ) -> set[str]:
         """Read one learner's completed nodes from PostgreSQL."""
-        conn = get_db()
+        owns_conn = conn is None
+        conn = conn or get_db()
         try:
             completed = db_store.load_completed_node_ids(conn, user_id, career_id)
             conn.commit()
             return engine.clean_completed(completed)
         finally:
+            if owns_conn:
+                conn.close()
+
+    def load_roadmap_data(
+        career_param: str | None,
+        user_id: int | None,
+    ) -> tuple[Any, int, GraphEngine, set[str]]:
+        """Load career, graph and progress over one shared connection.
+
+        Returns the still-open connection so the caller can run extra queries
+        (achievements, ranks) on it before closing.  This replaces the old
+        pattern where every helper opened its own PostgreSQL connection.
+        """
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            career_id = resolve_career_id(career_param, user_id, conn)
+            _, engine, _ = load_engine(career_id, conn)
+            completed = (
+                load_completed_for_user(user_id, career_id, engine, conn)
+                if user_id is not None
+                else set()
+            )
+            return conn, career_id, engine, completed
+        except Exception:
             conn.close()
+            raise
 
     def save_progress_for_user(
         user_id: int,
         skill_id: str,
         completed_value: bool,
-        career_id: int | None = None,
+        career_param: str | int | None = None,
     ):
-        """Validate a graph transition, then persist only that user's state."""
-        _, engine, _ = load_engine(career_id)
-        if skill_id not in engine.skill_by_id:
-            raise KeyError(skill_id)
+        """Validate a graph transition, then persist only that user's state.
+
+        Resolves the career and loads the graph on the same single connection
+        that persists the progress, so the request opens one DB connection
+        instead of three.
+        """
         conn = get_db()
         try:
+            db_store.ensure_schema(conn)
+            career_id = resolve_career_id(career_param, user_id, conn)
+            _, engine, _ = load_engine(career_id, conn)
+            if skill_id not in engine.skill_by_id:
+                raise KeyError(skill_id)
             current = engine.clean_completed(
                 db_store.load_completed_node_ids(conn, user_id, int(career_id))
             )
@@ -467,22 +622,6 @@ def create_app(database_path: str | None = None) -> Flask:
         finally:
             if owns_conn and conn is not None:
                 conn.close()
-
-    def validate_career_param(career_param: str | None) -> int | None:
-        """Return a validated career id from the query string, if present."""
-        if career_param is None:
-            return None
-        try:
-            career_id = int(career_param)
-        except (TypeError, ValueError):
-            raise KeyError(f"Unknown career: {career_param}")
-        conn = get_db()
-        try:
-            if not db_store.career_exists(conn, career_id):
-                raise KeyError(f"Career not found: {career_param}")
-        finally:
-            conn.close()
-        return career_id
 
     # =====================================================
     # Frontend Pages
@@ -978,6 +1117,52 @@ def create_app(database_path: str | None = None) -> Flask:
             if conn is not None:
                 conn.close()
 
+    @app.get("/api/profile/avatar")
+    def profile_avatar():
+        """Serve the learner's profile portrait with browser caching.
+
+        The portrait is generated once per account and never changes, so the
+        browser can cache it (revalidated via ETag) instead of re-downloading
+        the base64 data URL that ``/api/me`` still carries for legacy surfaces.
+        The URL is shared by every account, so the response is never stored
+        past revalidation: a different account on the same browser must always
+        receive its own portrait.  Legacy SVG fallbacks are not portraits and
+        stay hidden here, matching the initials fallback used everywhere else.
+        """
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_picture FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+            if row is None or not row[0]:
+                return error("Profile picture not set", 404)
+            image_bytes = bytes(row[0])
+            mime_type = AIService.profile_image_mime_type(image_bytes)
+            if mime_type is None or mime_type == "image/svg+xml":
+                return error("Profile picture is not a generated portrait", 404)
+            etag = hashlib.md5(image_bytes).hexdigest()
+            # The URL is shared by every account, so the browser must always
+            # revalidate before reusing a cached portrait. Otherwise the next
+            # account logged in on the same browser keeps seeing the previous
+            # account's image for up to the old 24h freshness window. The ETag
+            # still gives same-account reloads a fast 304.
+            headers = {
+                "Cache-Control": "private, no-cache",
+                "ETag": f'"{etag}"',
+            }
+            if request.if_none_match.contains(etag):
+                return Response(status=304, headers=headers)
+            return Response(image_bytes, mimetype=mime_type, headers=headers)
+        finally:
+            conn.close()
+
     @app.get("/api/profile/highest-achievement")
     def highest_profile_achievement():
         """Return only the highest career-scoped achievement for the profile."""
@@ -1250,36 +1435,35 @@ def create_app(database_path: str | None = None) -> Flask:
         )
 
         try:
-            career_id = resolve_career_id(request.args.get("career"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, career_id, engine)
+            conn, _, engine, completed = load_roadmap_data(
+                request.args.get("career"),
+                user_id,
+            )
+            try:
+                valid_subjects = {
+                    "all",
+                    *(
+                        subject["id"]
+                        for subject in engine.subjects
+                    ),
+                }
 
-            valid_subjects = {
-                "all",
-                *(
-                    subject["id"]
-                    for subject in engine.subjects
-                ),
-            }
+                if preferred_subject not in valid_subjects:
+                    return error(
+                        "Unknown subject",
+                        400,
+                        preferred_subject,
+                    )
 
-            if preferred_subject not in valid_subjects:
-                return error(
-                    "Unknown subject",
-                    400,
+                roadmap_payload = engine.build_roadmap_payload(
+                    completed,
                     preferred_subject,
                 )
-
-            roadmap_payload = engine.build_roadmap_payload(
-                completed,
-                preferred_subject,
-            )
-            conn = get_db()
-            try:
                 attach_user_context(conn, user_id, completed, roadmap_payload)
                 conn.commit()
+                return success(roadmap_payload)
             finally:
                 conn.close()
-            return success(roadmap_payload)
 
         except KeyError as exc:
             return error(
@@ -1315,31 +1499,34 @@ def create_app(database_path: str | None = None) -> Flask:
             return error("Login is required", 401)
 
         try:
-            career_id = resolve_career_id(request.args.get("career"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, career_id, engine)
-
-            roadmap_data = engine.build_roadmap_payload(
-                completed
+            conn, _, engine, completed = load_roadmap_data(
+                request.args.get("career"),
+                user_id,
             )
-
-            skill = next(
-                (
-                    node
-                    for node in roadmap_data["nodes"]
-                    if node["id"] == skill_id
-                ),
-                None,
-            )
-
-            if skill is None:
-                return error(
-                    "Skill not found",
-                    404,
-                    skill_id,
+            try:
+                roadmap_data = engine.build_roadmap_payload(
+                    completed
                 )
 
-            return success(skill)
+                skill = next(
+                    (
+                        node
+                        for node in roadmap_data["nodes"]
+                        if node["id"] == skill_id
+                    ),
+                    None,
+                )
+
+                if skill is None:
+                    return error(
+                        "Skill not found",
+                        404,
+                        skill_id,
+                    )
+
+                return success(skill)
+            finally:
+                conn.close()
 
         except KeyError as exc:
             return error(
@@ -1375,32 +1562,35 @@ def create_app(database_path: str | None = None) -> Flask:
             return error("Login is required", 401)
 
         try:
-            career_id = resolve_career_id(request.args.get("career"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, career_id, engine)
+            conn, _, engine, completed = load_roadmap_data(
+                request.args.get("career"),
+                user_id,
+            )
+            try:
+                if skill_id not in engine.skill_by_id:
+                    return error(
+                        "Skill not found",
+                        404,
+                        skill_id,
+                    )
 
-            if skill_id not in engine.skill_by_id:
-                return error(
-                    "Skill not found",
-                    404,
+                path = engine.build_learning_path(
                     skill_id,
+                    completed,
                 )
 
-            path = engine.build_learning_path(
-                skill_id,
-                completed,
-            )
-
-            return success(
-                {
-                    "targetSkillId": skill_id,
-                    "targetName": engine.skill_by_id[
-                        skill_id
-                    ]["name"],
-                    "steps": path,
-                    "remainingCount": len(path),
-                }
-            )
+                return success(
+                    {
+                        "targetSkillId": skill_id,
+                        "targetName": engine.skill_by_id[
+                            skill_id
+                        ]["name"],
+                        "steps": path,
+                        "remainingCount": len(path),
+                    }
+                )
+            finally:
+                conn.close()
 
         except KeyError as exc:
             return error(
@@ -1456,19 +1646,23 @@ def create_app(database_path: str | None = None) -> Flask:
             return error("startDate must use YYYY-MM-DD")
 
         try:
-            career_id = resolve_career_id(body.get("careerId"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, career_id, engine)
-            return success(
-                PlanService.build_preview(
-                    engine,
-                    completed,
-                    target_skill_id,
-                    weekly_hours,
-                    plan_start_date,
-                ),
-                "Learning plan generated",
+            conn, _, engine, completed = load_roadmap_data(
+                body.get("careerId"),
+                user_id,
             )
+            try:
+                return success(
+                    PlanService.build_preview(
+                        engine,
+                        completed,
+                        target_skill_id,
+                        weekly_hours,
+                        plan_start_date,
+                    ),
+                    "Learning plan generated",
+                )
+            finally:
+                conn.close()
         except KeyError:
             return error("Skill not found", 404, target_skill_id)
         except ValueError as exc:
@@ -1512,16 +1706,11 @@ def create_app(database_path: str | None = None) -> Flask:
             return error("Login is required", 401)
 
         try:
-            career_id = (
-                validate_career_param(str(career_param))
-                if career_param is not None
-                else None
-            )
             result = save_progress_for_user(
                 user_id,
                 skill_id,
                 completed_value,
-                career_id=career_id,
+                career_param=career_param,
             )
             message = "Skill progress updated" if completed_value else "Skill progress removed"
             return success(result, message)
@@ -1549,13 +1738,14 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             body = request.get_json(silent=True) or {}
             career_param = body.get("careerId") or request.args.get("career")
+            conn = get_db()
+            db_store.ensure_schema(conn)
             career_id = resolve_career_id(
                 str(career_param) if career_param is not None else None,
                 user_id,
+                conn,
             )
-            _, engine, _ = load_engine(career_id)
-            conn = get_db()
-            db_store.ensure_schema(conn)
+            _, engine, _ = load_engine(career_id, conn)
             db_store.reset_progress(conn, user_id, career_id)
             roadmap_payload = engine.build_roadmap_payload(set())
             attach_user_context(conn, user_id, set(), roadmap_payload)
@@ -1596,16 +1786,12 @@ def create_app(database_path: str | None = None) -> Flask:
         ).strip()
 
         try:
-            career_id = resolve_career_id(
-                body.get("careerId"), logged_in_user_id()
-            )
-            _, engine, _ = load_engine(career_id)
             user_id = logged_in_user_id()
-            completed = (
-                load_completed_for_user(user_id, career_id, engine)
-                if user_id is not None
-                else set()
+            conn, _, engine, completed = load_roadmap_data(
+                body.get("careerId"),
+                user_id,
             )
+            conn.close()
 
             valid_subjects = {
                 "all",
@@ -1729,13 +1915,11 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             user_id = logged_in_user_id()
-            career_id = resolve_career_id(body.get("careerId"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = (
-                load_completed_for_user(user_id, career_id, engine)
-                if user_id is not None
-                else set()
+            conn, _, engine, completed = load_roadmap_data(
+                body.get("careerId"),
+                user_id,
             )
+            conn.close()
 
             valid_subjects = {
                 "all",
@@ -1855,13 +2039,11 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             user_id = logged_in_user_id()
-            career_id = resolve_career_id(body.get("careerId"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = (
-                load_completed_for_user(user_id, career_id, engine)
-                if user_id is not None
-                else set()
+            conn, _, engine, completed = load_roadmap_data(
+                body.get("careerId"),
+                user_id,
             )
+            conn.close()
             if (
                 target_skill_id is not None
                 and target_skill_id
@@ -1983,13 +2165,11 @@ def create_app(database_path: str | None = None) -> Flask:
 
         try:
             user_id = logged_in_user_id()
-            career_id = resolve_career_id(body.get("careerId"), user_id)
-            _, engine, _ = load_engine(career_id)
-            completed = (
-                load_completed_for_user(user_id, career_id, engine)
-                if user_id is not None
-                else set()
+            conn, _, engine, completed = load_roadmap_data(
+                body.get("careerId"),
+                user_id,
             )
+            conn.close()
 
             analysis = AIAnalyzer.analyze(
                 engine,
@@ -2064,10 +2244,10 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=True,
-        # Keep one server process so its database network permission is retained.
-        use_reloader=False,
-    )
+    # Production launcher: waitress gives multiple worker threads, so one slow
+    # request (e.g. a long AI call) no longer blocks the whole site the way the
+    # single-threaded dev server does.  For local development with auto-reload,
+    # temporarily switch back to app.run(debug=True, use_reloader=False).
+    from waitress import serve
+
+    serve(app, host="127.0.0.1", port=5000, threads=8)
