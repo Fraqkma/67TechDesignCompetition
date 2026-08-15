@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 try:
     from dotenv import load_dotenv
@@ -105,6 +105,14 @@ def create_app(database_path: str | None = None) -> Flask:
         "dev-secret-change-this",
     )
 
+    @app.get("/pignopic/<path:filename>")
+    def achievement_image(filename: str):
+        """Serve only the supplied achievement artwork outside static/."""
+        allowed = {"join.png", "noob.png", "pro.png", "hacker.png", "god.png"}
+        if filename not in allowed:
+            return error("Achievement image not found", 404)
+        return send_from_directory(Path(app.root_path) / "pignopic", filename)
+
     # =====================================================
     # Response Helpers
     # =====================================================
@@ -167,8 +175,8 @@ def create_app(database_path: str | None = None) -> Flask:
         roadmap_payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Add DB-driven user context (achievements + rank) to a roadmap."""
-        roadmap_payload["achievements"] = (
-            db_store.build_achievements_payload(conn, user_id, completed)
+        roadmap_payload["achievements"] = db_store.build_achievements_payload(
+            conn, user_id, completed, roadmap_payload["progress"]["career"]
         )
         roadmap_payload["rank"] = db_store.load_rank(
             conn, roadmap_payload["progress"]["career"]
@@ -219,11 +227,13 @@ def create_app(database_path: str | None = None) -> Flask:
         finally:
             conn.close()
 
-    def load_completed_for_user(user_id: int, engine: GraphEngine) -> set[str]:
+    def load_completed_for_user(
+        user_id: int, career_id: int, engine: GraphEngine
+    ) -> set[str]:
         """Read one learner's completed nodes from PostgreSQL."""
         conn = get_db()
         try:
-            completed = db_store.load_completed_node_ids(conn, user_id)
+            completed = db_store.load_completed_node_ids(conn, user_id, career_id)
             conn.commit()
             return engine.clean_completed(completed)
         finally:
@@ -242,7 +252,7 @@ def create_app(database_path: str | None = None) -> Flask:
         conn = get_db()
         try:
             current = engine.clean_completed(
-                db_store.load_completed_node_ids(conn, user_id)
+                db_store.load_completed_node_ids(conn, user_id, int(career_id))
             )
             removed_ids: list[str] = []
             if completed_value:
@@ -255,7 +265,7 @@ def create_app(database_path: str | None = None) -> Flask:
                         )
                     )
                 newly_completed = skill_id not in current
-                db_store.save_completed(conn, user_id, int(skill_id), True)
+                db_store.save_completed(conn, user_id, int(career_id), int(skill_id), True)
                 # Award the node's EXP reward only the first time it is
                 # completed so the Code Novice achievement can unlock.
                 if newly_completed:
@@ -271,7 +281,7 @@ def create_app(database_path: str | None = None) -> Flask:
                 )
                 # removed_ids already includes skill_id itself.
                 node_ids = {int(item) for item in removed_ids}
-                db_store.delete_completed_many(conn, user_id, sorted(node_ids))
+                db_store.delete_completed_many(conn, user_id, int(career_id), sorted(node_ids))
                 # Un-completing refunds the EXP of every affected skill so
                 # toggling cannot farm points.
                 exp_to_remove = sum(
@@ -1021,7 +1031,7 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             career_id = resolve_career_id(request.args.get("career"), user_id)
             _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, engine)
+            completed = load_completed_for_user(user_id, career_id, engine)
 
             valid_subjects = {
                 "all",
@@ -1086,7 +1096,7 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             career_id = resolve_career_id(request.args.get("career"), user_id)
             _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, engine)
+            completed = load_completed_for_user(user_id, career_id, engine)
 
             roadmap_data = engine.build_roadmap_payload(
                 completed
@@ -1146,7 +1156,7 @@ def create_app(database_path: str | None = None) -> Flask:
         try:
             career_id = resolve_career_id(request.args.get("career"), user_id)
             _, engine, _ = load_engine(career_id)
-            completed = load_completed_for_user(user_id, engine)
+            completed = load_completed_for_user(user_id, career_id, engine)
 
             if skill_id not in engine.skill_by_id:
                 return error(
@@ -1225,8 +1235,9 @@ def create_app(database_path: str | None = None) -> Flask:
             return error("startDate must use YYYY-MM-DD")
 
         try:
-            _, engine, _ = load_engine()
-            completed = load_completed_for_user(user_id, engine)
+            career_id = resolve_career_id(body.get("careerId"), user_id)
+            _, engine, _ = load_engine(career_id)
+            completed = load_completed_for_user(user_id, career_id, engine)
             return success(
                 PlanService.build_preview(
                     engine,
@@ -1324,10 +1335,7 @@ def create_app(database_path: str | None = None) -> Flask:
             _, engine, _ = load_engine(career_id)
             conn = get_db()
             db_store.ensure_schema(conn)
-            db_store.reset_progress(conn, user_id)
-            # Achievements derive from progress, so clear unlocked records
-            # too and let them re-evaluate from the reset state.
-            db_store.clear_user_achievements(conn, user_id)
+            db_store.reset_progress(conn, user_id, career_id)
             roadmap_payload = engine.build_roadmap_payload(set())
             attach_user_context(conn, user_id, set(), roadmap_payload)
             conn.commit()
@@ -1373,7 +1381,7 @@ def create_app(database_path: str | None = None) -> Flask:
             _, engine, _ = load_engine(career_id)
             user_id = logged_in_user_id()
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )
@@ -1503,7 +1511,7 @@ def create_app(database_path: str | None = None) -> Flask:
             career_id = resolve_career_id(body.get("careerId"), user_id)
             _, engine, _ = load_engine(career_id)
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )
@@ -1629,7 +1637,7 @@ def create_app(database_path: str | None = None) -> Flask:
             career_id = resolve_career_id(body.get("careerId"), user_id)
             _, engine, _ = load_engine(career_id)
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )
@@ -1757,7 +1765,7 @@ def create_app(database_path: str | None = None) -> Flask:
             career_id = resolve_career_id(body.get("careerId"), user_id)
             _, engine, _ = load_engine(career_id)
             completed = (
-                load_completed_for_user(user_id, engine)
+                load_completed_for_user(user_id, career_id, engine)
                 if user_id is not None
                 else set()
             )

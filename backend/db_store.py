@@ -118,6 +118,16 @@ SCHEMA_STATEMENTS: list[str] = [
         UNIQUE (user_id, node_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS user_career_node_progress (
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        career_id BIGINT NOT NULL REFERENCES careers(id) ON DELETE CASCADE,
+        node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        status VARCHAR(20) NOT NULL,
+        completed_at TIMESTAMPTZ,
+        PRIMARY KEY (user_id, career_id, node_id)
+    )
+    """,
     # ---- Achievements & Certificates module ----
     """
     CREATE TABLE IF NOT EXISTS achievements (
@@ -271,6 +281,9 @@ SCHEMA_STATEMENTS: list[str] = [
     ALTER TABLE achievements ADD COLUMN IF NOT EXISTS condition TEXT
     """,
     """
+    ALTER TABLE achievements ADD COLUMN IF NOT EXISTS category VARCHAR(40)
+    """,
+    """
     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS subject_id BIGINT
     """,
     """
@@ -368,6 +381,17 @@ ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
     ),
 ]
 
+# One shared achievement catalog.  The progress is evaluated against the
+# selected career only, so the same learner can be Noob in one track and
+# Hacker in another without creating a separate catalog per career.
+CAREER_ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
+    (101, "Join", "Start this career path", "/pignopic/join.png", '{"type":"career_progress","target":0}'),
+    (102, "Noob", "Reach 25% progress in this career", "/pignopic/noob.png", '{"type":"career_progress","target":25}'),
+    (103, "Pro", "Reach 50% progress in this career", "/pignopic/pro.png", '{"type":"career_progress","target":50}'),
+    (104, "Hacker", "Reach 75% progress in this career", "/pignopic/hacker.png", '{"type":"career_progress","target":75}'),
+    (105, "God", "Complete 100% of this career", "", '{"type":"career_progress","target":100}'),
+]
+
 
 def seed_achievements(conn) -> None:
     """Ensure the achievement catalog matches the canonical seeded catalog.
@@ -394,6 +418,18 @@ def seed_achievements(conn) -> None:
                     description = EXCLUDED.description,
                     icon_url = EXCLUDED.icon_url,
                     condition = COALESCE(achievements.condition, EXCLUDED.condition)
+                """,
+                (achievement_id, title, description, icon_url, condition),
+            )
+        for achievement_id, title, description, icon_url, condition in CAREER_ACHIEVEMENT_SEEDS:
+            cur.execute(
+                """
+                INSERT INTO achievements (id, title, description, icon_url, condition, category)
+                VALUES (%s, %s, %s, %s, %s, 'career_progress')
+                ON CONFLICT (id) DO UPDATE SET
+                    title = EXCLUDED.title, description = EXCLUDED.description,
+                    icon_url = EXCLUDED.icon_url, condition = EXCLUDED.condition,
+                    category = EXCLUDED.category
                 """,
                 (achievement_id, title, description, icon_url, condition),
             )
@@ -479,6 +515,66 @@ def ensure_schema(conn) -> None:
         seed_achievements(conn)
         seed_subjects_and_nodes(conn)
         seed_ranks(conn)
+# =========================================================
+# Meme questions (catalog seed)
+# =========================================================
+
+MEME_QUESTION_SEEDS: list[tuple[int, str, int]] = [
+    (1, "สัตว์ที่ชอบ", 1),
+    (2, "สีที่ชอบ", 2),
+    (3, "ฤดูที่ชอบ", 3),
+]
+
+
+def seed_meme_questions(conn) -> None:
+    """Insert the meme question catalog (idempotent)."""
+    with conn.cursor() as cur:
+        for question_id, question_text, question_order in MEME_QUESTION_SEEDS:
+            cur.execute(
+                """
+                INSERT INTO meme_questions (id, question_text, question_order)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    question_text = EXCLUDED.question_text,
+                    question_order = EXCLUDED.question_order
+                """,
+                (question_id, question_text, question_order),
+            )
+
+
+def ensure_schema(conn) -> None:
+    """Create every table used by the app (idempotent)."""
+    with conn.cursor() as cur:
+        for statement in SCHEMA_STATEMENTS:
+            cur.execute(statement)
+    seed_achievements(conn)
+    with conn.cursor() as cur:
+        # Legacy rows did not identify a career.  They can safely belong only
+        # to the learner's current career, never to every career sharing a node.
+        cur.execute(
+            """
+            INSERT INTO user_career_node_progress
+                (user_id, career_id, node_id, status, completed_at)
+            SELECT p.user_id, p.current_career_id, old.node_id, old.status, old.completed_at
+            FROM user_node_progress old
+            JOIN user_profiles p ON p.user_id = old.user_id
+            WHERE p.current_career_id IS NOT NULL
+            ON CONFLICT (user_id, career_id, node_id) DO NOTHING
+            """
+        )
+        # The old table has no career dimension.  Leaving rows there would
+        # re-import cleared progress on every request, so the migration is a
+        # move, not a copy.
+        cur.execute(
+            """
+            DELETE FROM user_node_progress old
+            USING user_profiles p
+            WHERE p.user_id = old.user_id AND p.current_career_id IS NOT NULL
+            """
+        )
+    seed_subjects_and_nodes(conn)
+    seed_ranks(conn)
+    seed_meme_questions(conn)
 
 
 # =========================================================
@@ -811,60 +907,61 @@ def _layout(
 # =========================================================
 
 
-def load_completed_node_ids(conn, user_id: int) -> set[str]:
-    """Return node ids the user marked completed, as strings."""
+def load_completed_node_ids(conn, user_id: int, career_id: int) -> set[str]:
+    """Return completed nodes for one learner in one career."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT node_id FROM user_node_progress
-            WHERE user_id = %s AND status = 'completed'
+            SELECT node_id FROM user_career_node_progress
+            WHERE user_id = %s AND career_id = %s AND status = 'completed'
             """,
-            (user_id,),
+            (user_id, career_id),
         )
         return {str(row[0]) for row in cur.fetchall()}
 
 
 def save_completed(
-    conn, user_id: int, node_id: int, completed: bool
+    conn, user_id: int, career_id: int, node_id: int, completed: bool
 ) -> None:
     """Mark a node completed, or remove the completion record."""
     with conn.cursor() as cur:
         if completed:
             cur.execute(
                 """
-                INSERT INTO user_node_progress (user_id, node_id, status, completed_at)
-                VALUES (%s, %s, 'completed', NOW())
-                ON CONFLICT (user_id, node_id)
+                INSERT INTO user_career_node_progress
+                    (user_id, career_id, node_id, status, completed_at)
+                VALUES (%s, %s, %s, 'completed', NOW())
+                ON CONFLICT (user_id, career_id, node_id)
                 DO UPDATE SET status = 'completed', completed_at = NOW()
                 """,
-                (user_id, node_id),
+                (user_id, career_id, node_id),
             )
         else:
             cur.execute(
                 """
-                DELETE FROM user_node_progress
-                WHERE user_id = %s AND node_id = %s
+                DELETE FROM user_career_node_progress
+                WHERE user_id = %s AND career_id = %s AND node_id = %s
                 """,
-                (user_id, node_id),
+                (user_id, career_id, node_id),
             )
 
 
-def delete_completed_many(conn, user_id: int, node_ids: list[int]) -> None:
+def delete_completed_many(conn, user_id: int, career_id: int, node_ids: list[int]) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            DELETE FROM user_node_progress
-            WHERE user_id = %s AND node_id = ANY(%s)
+            DELETE FROM user_career_node_progress
+            WHERE user_id = %s AND career_id = %s AND node_id = ANY(%s)
             """,
-            (user_id, node_ids),
+            (user_id, career_id, node_ids),
         )
 
 
-def reset_progress(conn, user_id: int) -> None:
+def reset_progress(conn, user_id: int, career_id: int) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM user_node_progress WHERE user_id = %s",
-            (user_id,),
+            "DELETE FROM user_career_node_progress WHERE user_id = %s AND career_id = %s",
+            (user_id, career_id),
         )
 
 
@@ -874,12 +971,13 @@ def reset_progress(conn, user_id: int) -> None:
 
 
 def load_achievements(conn) -> list[dict[str, Any]]:
-    """Return every achievement definition from the achievements table."""
+    """Return the five shared, career-progress achievement definitions."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT id, title, description, icon_url, condition
             FROM achievements
+            WHERE category = 'career_progress'
             ORDER BY id
             """
         )
@@ -999,29 +1097,22 @@ def build_achievements_payload(
     conn,
     user_id: int,
     completed_skill_ids: set[str],
+    career_progress: int,
 ) -> list[dict[str, Any]]:
-    """Evaluate unlock state from the database and persist new unlocks.
+    """Build the shared five-level catalog for the selected career.
 
-    Returns the list consumed by the roadmap frontend.  Callers must commit
-    the connection so newly unlocked records are saved.
+    Unlocks are intentionally not written to ``user_achievements``: this is
+    a live view of career-scoped graph progress, not a user-global badge.
     """
     achievements = load_achievements(conn)
-    unlocked_ids = load_unlocked_achievement_ids(conn, user_id)
-    stats = load_user_stats(conn, user_id)
-
-    newly_unlocked: list[int] = []
     payload: list[dict[str, Any]] = []
     for achievement in achievements:
-        achievement_id = int(achievement["id"])
-        unlocked = achievement_id in unlocked_ids
-        if not unlocked:
-            unlocked = evaluate_achievement_condition(
-                achievement["condition"],
-                completed_skill_ids,
-                stats,
-            )
-            if unlocked:
-                newly_unlocked.append(achievement_id)
+        try:
+            condition = json.loads(achievement["condition"] or "{}")
+            target = int(condition["target"])
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            target = 101  # Invalid database data must never unlock a badge.
+        unlocked = career_progress >= target
         payload.append(
             {
                 "id": achievement["id"],
@@ -1029,12 +1120,9 @@ def build_achievements_payload(
                 "description": achievement["description"],
                 "iconUrl": achievement["iconUrl"],
                 "unlocked": unlocked,
+                "target": target,
             }
         )
-
-    if newly_unlocked:
-        save_unlocked_achievements(conn, user_id, newly_unlocked)
-
     return payload
 
 

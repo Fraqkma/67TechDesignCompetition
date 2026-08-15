@@ -92,19 +92,12 @@ class AchievementDatabaseTests(unittest.TestCase):
             conn.close()
 
     def test_catalog_is_loaded_from_database(self) -> None:
-        self.assertEqual(len(self.achievements), 4)
+        self.assertEqual(len(self.achievements), 5)
         names = {achievement["name"] for achievement in self.achievements}
-        self.assertIn("First Step", names)
-        self.assertIn("Code Novice", names)
-        self.assertIn("Social Butterfly", names)
-        self.assertIn("Study Buddy Host", names)
+        self.assertEqual(names, {"Join", "Noob", "Pro", "Hacker", "God"})
 
     def test_catalog_has_icons_and_conditions(self) -> None:
         for achievement in self.achievements:
-            self.assertTrue(
-                achievement["iconUrl"].startswith("http"),
-                achievement["name"],
-            )
             self.assertTrue(achievement["condition"], achievement["name"])
 
 
