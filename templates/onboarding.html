@@ -67,8 +67,14 @@
             <input id="favoriteColor" name="favoriteColor" type="text" maxlength="80" placeholder="เช่น สีน้ำเงิน, สีชมพู" required />
           </div>
           <div>
-            <label for="favoriteSeason">ฤดูที่ชอบ</label>
-            <input id="favoriteSeason" name="favoriteSeason" type="text" maxlength="80" placeholder="เช่น ฤดูใบไม้ผลิ, ฤดูฝน" required />
+            <label for="gender">เพศ</label>
+            <select id="gender" name="gender" required>
+              <option value="">เลือกเพศ</option>
+              <option value="ชาย">ชาย</option>
+              <option value="หญิง">หญิง</option>
+              <option value="นอนไบนารี">นอนไบนารี</option>
+              <option value="ไม่ต้องการระบุ">ไม่ต้องการระบุ</option>
+            </select>
           </div>
         </div>
         <button id="submit-button" type="submit">สร้างโปรไฟล์</button>
@@ -104,9 +110,10 @@
           const payload = {
             favoriteAnimal: document.getElementById('favoriteAnimal').value.trim(),
             favoriteColor: document.getElementById('favoriteColor').value.trim(),
-            favoriteSeason: document.getElementById('favoriteSeason').value.trim(),
+            gender: document.getElementById('gender').value,
           };
 
+          showMessage('กำลังใช้คำตอบของคุณสร้างรูปโปรไฟล์ อาจใช้เวลาสักครู่...');
           await requestJson('/api/profile/onboarding', {
             method: 'POST',
             body: JSON.stringify(payload),

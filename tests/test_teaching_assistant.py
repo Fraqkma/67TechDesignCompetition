@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import Mock, patch
 
@@ -138,23 +139,26 @@ class TeachingAssistantTests(unittest.TestCase):
             {
                 "favoriteAnimal": "cat",
                 "favoriteColor": "sky blue",
-                "favoriteSeason": "rainy",
+                "gender": "หญิง",
             },
             ["First Step", "Code Novice"],
         )
 
         self.assertIn("cat", prompt.lower())
         self.assertIn("sky blue", prompt.lower())
-        self.assertIn("rainy", prompt.lower())
+        self.assertIn("gender: female", prompt.lower())
+        self.assertIn("without stereotypes", prompt.lower())
         self.assertIn("First Step", prompt)
         self.assertIn("Code Novice", prompt)
+        self.assertIn("Do not include written words", prompt)
+        self.assertNotIn("Return a clean SVG", prompt)
 
     def test_profile_fallback_image_is_svg_bytes(self):
         image_bytes = AIService.generate_profile_fallback_image(
             {
                 "favoriteAnimal": "cat",
                 "favoriteColor": "sky blue",
-                "favoriteSeason": "rainy",
+                "gender": "หญิง",
             },
             ["First Step"],
         )
@@ -170,22 +174,58 @@ class TeachingAssistantTests(unittest.TestCase):
 
         with patch.dict(
             "os.environ",
-            {"AI_API_KEY": "test-key", "AI_IMAGE_MODEL": "gpt-image-1"},
+            {
+                "OPENAI_API_KEY": "",
+                "AI_API_KEY": "test-key",
+                "AI_IMAGE_MODEL": "gpt-image-1",
+            },
             clear=False,
         ):
+            exact_prompt = "Use this exact profile portrait prompt"
             image_bytes = AIService.generate_profile_image(
                 {
                     "favoriteAnimal": "cat",
                     "favoriteColor": "sky blue",
-                    "favoriteSeason": "rainy",
+                    "gender": "หญิง",
                 },
                 ["First Step"],
+                prompt=exact_prompt,
+                allow_fallback=False,
             )
 
         self.assertTrue(image_bytes.startswith(b"\x89PNG"))
         request_object = mocked_urlopen.call_args.args[0]
         self.assertIn("/images/generations", request_object.full_url)
         self.assertEqual(request_object.get_header("Authorization"), "Bearer test-key")
+        self.assertEqual(json.loads(request_object.data)["prompt"], exact_prompt)
+
+    @patch("backend.ai_service.request.urlopen", side_effect=TimeoutError("timed out"))
+    def test_required_profile_image_does_not_silently_store_fallback(self, _mocked):
+        with patch.dict(
+            "os.environ",
+            {"OPENAI_API_KEY": "", "AI_API_KEY": "test-key"},
+            clear=False,
+        ):
+            with self.assertRaises(AIService.ProfileImageGenerationError):
+                AIService.generate_profile_image(
+                    {
+                        "favoriteAnimal": "cat",
+                        "favoriteColor": "blue",
+                        "gender": "นอนไบนารี",
+                    },
+                    prompt="exact prompt",
+                    allow_fallback=False,
+                )
+
+    def test_profile_image_mime_type_distinguishes_legacy_svg_and_png(self):
+        self.assertEqual(
+            AIService.profile_image_mime_type(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+            "image/svg+xml",
+        )
+        self.assertEqual(
+            AIService.profile_image_mime_type(b"\x89PNG\r\n\x1a\nrest"),
+            "image/png",
+        )
 
 
 if __name__ == "__main__":

@@ -115,18 +115,22 @@ study_buddy_store.SOCIAL_SCHEMA_STATEMENTS) ดังนั้น ensure_schema(
 
 [TABLE: user_profiles]
 คำอธิบาย: เก็บข้อมูลโปรไฟล์ Gamification (Level/EXP), สายอาชีพที่กำลังเรียน
-และรูปโปรไฟล์ (ใหม่)
+คำตอบ onboarding 3 ข้อ และรูปโปรไฟล์ AI ของผู้ใช้
 คอลัมน์:
 - user_id (BIGINT, PK, FK)       : รหัสผู้ใช้ (-> users.id / CASCADE)
 - display_name (VARCHAR)         : ชื่อที่ใช้แสดงผลในระบบ
 - level (INTEGER)                : เลเวลปัจจุบัน (ค่าเริ่มต้น: 1)
 - current_exp (INTEGER)          : EXP สะสมปัจจุบัน (ค่าเริ่มต้น: 0)
 - current_career_id (BIGINT, FK) : สายอาชีพที่เลือกเรียน (-> careers.id / SET NULL)
+- favorite_animal (VARCHAR)      : สัตว์ที่ชอบจากคำถาม onboarding
+- favorite_color (VARCHAR)       : สีที่ชอบจากคำถาม onboarding
+- gender (VARCHAR)               : เพศจากตัวเลือก onboarding
+- profile_prompt (TEXT)          : prompt ที่ส่งให้บริการสร้างรูปจริง (ไม่ render เป็นข้อความ)
+- profile_picture (BYTEA)        : ไฟล์รูปโปรไฟล์ AI ที่สร้างสำเร็จ เก็บเป็น binary
 - updated_at (TIMESTAMP)         : เวลาอัปเดตล่าสุด
-- profile_picture (BYTEA)        : [ใหม่] รูปโปรไฟล์ (เก็บเป็น binary ตรง ๆ)
-                                   ใช้แสดงในแชทโลก / ระบบโซเชียล
-หมายเหตุ: คอลัมน์ profile_picture เป็น BYTEA ตามการตกลงของทีม — ยังไม่มีโค้ด
-อ่าน/เขียน คอลัมน์นี้ยังว่างทั้งหมด (NULL)
+หมายเหตุ: app.py เขียน profile_prompt และ profile_picture ผ่าน onboarding API
+และอ่านรูปจาก BYTEA เพื่อแสดงในหน้า Profile กับแถบผู้ใช้ด้านบน รูปจริงสร้างได้
+หนึ่งครั้งต่อบัญชี; fallback SVG เดิมไม่นับเป็นรูป AI ที่สร้างสำเร็จ
 
 [TABLE: user_node_progress]
 คำอธิบาย: บันทึกความก้าวหน้าการเรียนของผู้ใช้แต่ละคนในแต่ละวิชา (กราฟปัจจุบัน)
@@ -449,6 +453,9 @@ skill_id เป็น string (เช่น 'programming_fundamentals', 'basic_al
 --------------------------------------------------------------------------------
 11. หมายเหตุการแก้ไขเอกสาร (CHANGELOG)
 --------------------------------------------------------------------------------
+- v4: เพิ่มคำตอบ onboarding (favorite_animal, favorite_color, gender),
+      บันทึก prompt และรูป AI จริงลง user_profiles และ render รูปจาก BYTEA
+      โดยจำกัดการสร้างรูปจริงหนึ่งครั้งต่อบัญชี
 - v3: เพิ่มตารางใหม่ 5 ตาราง (world_chat_messages, meme_questions,
       user_meme_answers, study_frequency_memes, subject_memes)
       เพิ่มคอลัมน์ profile_picture (BYTEA) ใน user_profiles

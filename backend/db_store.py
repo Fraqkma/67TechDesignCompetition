@@ -102,7 +102,7 @@ SCHEMA_STATEMENTS: list[str] = [
         current_career_id BIGINT REFERENCES careers(id) ON DELETE SET NULL,
         favorite_animal VARCHAR(80),
         favorite_color VARCHAR(80),
-        favorite_season VARCHAR(80),
+        gender VARCHAR(80),
         profile_prompt TEXT,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         profile_picture BYTEA
@@ -308,7 +308,7 @@ SCHEMA_STATEMENTS: list[str] = [
     ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS favorite_color VARCHAR(80)
     """,
     """
-    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS favorite_season VARCHAR(80)
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS gender VARCHAR(80)
     """,
     """
     ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT
@@ -522,7 +522,7 @@ def ensure_schema(conn) -> None:
 MEME_QUESTION_SEEDS: list[tuple[int, str, int]] = [
     (1, "สัตว์ที่ชอบ", 1),
     (2, "สีที่ชอบ", 2),
-    (3, "ฤดูที่ชอบ", 3),
+    (3, "เพศ", 3),
 ]
 
 
