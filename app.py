@@ -178,7 +178,14 @@ def create_app(database_path: str | None = None) -> Flask:
     def logged_in_user_id() -> int | None:
         """Return the authenticated user id without trusting request data."""
         user_id = session.get("user_id")
-        return user_id if isinstance(user_id, int) else None
+        if user_id is None:
+            return None
+        try:
+            normalized_user_id = int(user_id)
+            session["user_id"] = normalized_user_id
+            return normalized_user_id
+        except (TypeError, ValueError):
+            return None
 
     def resolve_career_id(
         career_param: str | None,
@@ -465,11 +472,16 @@ def create_app(database_path: str | None = None) -> Flask:
                 )
             conn.commit()
             session.clear()
-            session["user_id"] = user_id
+            session["user_id"] = int(user_id)
             session["uid"] = uid
             session["email"] = user_email
             return success(
-                {"id": user_id, "uid": uid, "email": user_email},
+                {
+                    "id": user_id,
+                    "uid": uid,
+                    "email": user_email,
+                    "redirect": "/onboarding",
+                },
                 "Account created",
                 201,
             )
@@ -555,7 +567,7 @@ def create_app(database_path: str | None = None) -> Flask:
                 )
 
             # Save login session
-            session["user_id"] = user_id
+            session["user_id"] = int(user_id)
             session["uid"] = uid
             session["email"] = user_email
 
@@ -608,6 +620,13 @@ def create_app(database_path: str | None = None) -> Flask:
         """Return currently logged-in user and profile."""
 
         user_id = session.get("user_id")
+        if user_id is not None:
+            try:
+                user_id = int(user_id)
+                session["user_id"] = user_id
+            except (TypeError, ValueError):
+                session.clear()
+                return error("ยังไม่ได้ Login", 401)
 
         if user_id is None:
             return error(
@@ -673,10 +692,13 @@ def create_app(database_path: str | None = None) -> Flask:
             profile_image = None
             if profile_picture:
                 import base64
+                image_bytes = bytes(profile_picture)
                 image_prefix = "data:image/png;base64,"
-                if profile_picture.startswith(b"<svg"):
+                if image_bytes.startswith(b"<svg"):
                     image_prefix = "data:image/svg+xml;base64,"
-                profile_image = f"{image_prefix}{base64.b64encode(profile_picture).decode('ascii')}"
+                profile_image = (
+                    f"{image_prefix}{base64.b64encode(image_bytes).decode('ascii')}"
+                )
 
             return success(
                 {
