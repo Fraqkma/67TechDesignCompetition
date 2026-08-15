@@ -1039,9 +1039,8 @@
 
 
           // Login สำเร็จ
-
-          window.location.href =
-            "/roadmap";
+          const redirectPath = result?.data?.redirect || "/roadmap";
+          window.location.href = redirectPath;
 
         }
 

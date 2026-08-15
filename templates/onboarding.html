@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Onboarding | Enlightenment Compass</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+Thai:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #071019;
+        --panel: rgba(13, 25, 36, 0.9);
+        --panel-2: rgba(20, 34, 48, 0.9);
+        --border: rgba(167, 204, 222, 0.18);
+        --text: #edf7fb;
+        --muted: #99afc1;
+        --accent: #73e5c1;
+        --accent-2: #6dc8ff;
+        --danger: #ff8d95;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        background: radial-gradient(circle at top, rgba(109, 200, 255, 0.12), transparent 30%), linear-gradient(180deg, var(--bg), #0c1724 100%);
+        color: var(--text); font-family: "Inter", "Noto Sans Thai", sans-serif;
+      }
+      main {
+        width: min(100% - 32px, 720px);
+        background: var(--panel);
+        border: 1px solid var(--border); border-radius: 26px; box-shadow: 0 24px 80px rgba(0,0,0,0.25);
+        padding: 36px 28px 28px;
+      }
+      .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.16em; font-weight: 800; font-size: 0.75rem; }
+      h1 { margin: 16px 0 8px; font-size: clamp(2rem, 5vw, 3rem); }
+      p { margin: 0; color: var(--muted); line-height: 1.7; }
+      form { margin-top: 28px; }
+      .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; }
+      label { display: block; margin-bottom: 8px; font-weight: 700; }
+      input, select { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; }
+      input:focus, select:focus { outline: 2px solid rgba(115, 229, 193, 0.35); border-color: rgba(115, 229, 193, 0.7); }
+      button {
+        margin-top: 24px; width: 100%; border: none; border-radius: 14px; padding: 15px 20px;
+        background: linear-gradient(120deg, var(--accent), var(--accent-2)); color: #04131d; font: 800 1rem inherit; cursor: pointer;
+      }
+      button:disabled { opacity: 0.7; cursor: wait; }
+      #message { min-height: 22px; margin-top: 16px; font-weight: 600; }
+      .error { color: var(--danger); }
+      .success { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">First Login</div>
+      <h1>สร้างโปรไฟล์ของคุณ</h1>
+      <p>ตอบคำถาม 3 ข้อเพื่อให้ระบบสร้างภาพโปรไฟล์ที่เข้ากับบุคลิกของคุณ แล้วเริ่มเส้นทางการเรียนต่อได้เลย</p>
+
+      <form id="onboarding-form">
+        <div class="field-grid">
+          <div>
+            <label for="favoriteAnimal">สัตว์ที่ชอบ</label>
+            <input id="favoriteAnimal" name="favoriteAnimal" type="text" maxlength="80" placeholder="เช่น แมว, นก, สิงโต" required />
+          </div>
+          <div>
+            <label for="favoriteColor">สีที่ชอบ</label>
+            <input id="favoriteColor" name="favoriteColor" type="text" maxlength="80" placeholder="เช่น สีน้ำเงิน, สีชมพู" required />
+          </div>
+          <div>
+            <label for="favoriteSeason">ฤดูที่ชอบ</label>
+            <input id="favoriteSeason" name="favoriteSeason" type="text" maxlength="80" placeholder="เช่น ฤดูใบไม้ผลิ, ฤดูฝน" required />
+          </div>
+        </div>
+        <button id="submit-button" type="submit">สร้างโปรไฟล์</button>
+        <div id="message" aria-live="polite"></div>
+      </form>
+    </main>
+
+    <script>
+      const form = document.getElementById('onboarding-form');
+      const message = document.getElementById('message');
+      const submitButton = document.getElementById('submit-button');
+
+      function showMessage(text, isError = false) {
+        message.textContent = text;
+        message.className = isError ? 'error' : 'success';
+      }
+
+      async function requestJson(url, options = {}) {
+        const response = await fetch(url, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...options });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.ok) {
+          throw new Error(body.error || 'Request failed');
+        }
+        return body;
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        showMessage('');
+
+        try {
+          const payload = {
+            favoriteAnimal: document.getElementById('favoriteAnimal').value.trim(),
+            favoriteColor: document.getElementById('favoriteColor').value.trim(),
+            favoriteSeason: document.getElementById('favoriteSeason').value.trim(),
+          };
+
+          await requestJson('/api/profile/onboarding', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
+          showMessage('สร้างโปรไฟล์สำเร็จ กำลังนำคุณไปยัง Roadmap...');
+          window.location.href = '/roadmap';
+        } catch (error) {
+          showMessage(error.message, true);
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

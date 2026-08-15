@@ -99,6 +99,10 @@ SCHEMA_STATEMENTS: list[str] = [
         level INTEGER NOT NULL DEFAULT 1,
         current_exp INTEGER NOT NULL DEFAULT 0,
         current_career_id BIGINT REFERENCES careers(id) ON DELETE SET NULL,
+        favorite_animal VARCHAR(80),
+        favorite_color VARCHAR(80),
+        favorite_season VARCHAR(80),
+        profile_prompt TEXT,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         profile_picture BYTEA
     )
@@ -282,6 +286,18 @@ SCHEMA_STATEMENTS: list[str] = [
     """,
     """
     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS real_world TEXT NOT NULL DEFAULT '[]'
+    """,
+    """
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS favorite_animal VARCHAR(80)
+    """,
+    """
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS favorite_color VARCHAR(80)
+    """,
+    """
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS favorite_season VARCHAR(80)
+    """,
+    """
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT
     """,
     """
     ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS profile_picture BYTEA
@@ -527,6 +543,17 @@ def user_career_id(conn, user_id: int) -> int | None:
         )
         row = cur.fetchone()
         return row[0] if row and row[0] is not None else None
+
+
+def user_display_name(conn, user_id: int) -> str | None:
+    """Return the learner-facing display name for the given user."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT display_name FROM user_profiles WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row and row[0] else None
 
 
 # =========================================================

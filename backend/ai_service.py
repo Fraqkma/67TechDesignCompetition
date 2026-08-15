@@ -67,6 +67,117 @@ class AIService:
         )
 
     @staticmethod
+    def build_profile_prompt(
+        answers: dict[str, str], achievements: list[str] | None = None
+    ) -> str:
+        """Create a prompt for a custom profile portrait based on onboarding answers."""
+        favorite_animal = (answers.get("favoriteAnimal") or "animal of choice").strip()
+        favorite_color = (answers.get("favoriteColor") or "favorite color").strip()
+        favorite_season = (answers.get("favoriteSeason") or "favorite season").strip()
+        achievement_text = ", ".join(achievements or []) or "new learner"
+
+        return (
+            "Create a warm, polished profile portrait for a learner with a joyful science-tech style. "
+            "Use a friendly character illustration with a modern educational vibe. "
+            f"The learner loves {favorite_animal}, likes {favorite_color}, and prefers {favorite_season}. "
+            "Include subtle visual motifs for learning, skill growth, and discovery. "
+            "The portrait should feel confident, creative, and student-friendly, with a clean premium social-app aesthetic. "
+            f"Current achievement badges: {achievement_text}. "
+            "Return a clean SVG illustration only, with readable shapes and bright but balanced colors."
+        )
+
+    @staticmethod
+    def generate_profile_image(
+        answers: dict[str, str], achievements: list[str] | None = None
+    ) -> bytes:
+        """Generate a profile portrait using the OpenAI-compatible image API when configured."""
+        api_key = AIService.resolve_api_key()
+        if not api_key:
+            return AIService.generate_profile_fallback_image(answers, achievements)
+
+        prompt = AIService.build_profile_prompt(answers, achievements)
+        model = os.getenv("AI_IMAGE_MODEL", "gpt-image-1").strip() or "gpt-image-1"
+        endpoint = f"{AIService._resolve_base_url().rstrip('/')}/images/generations"
+
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": "1024x1024",
+        }
+
+        req = request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                response_body = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return AIService.generate_profile_fallback_image(answers, achievements)
+
+        data_items = response_body.get("data") or []
+        if not data_items:
+            return AIService.generate_profile_fallback_image(answers, achievements)
+
+        image_data = data_items[0].get("b64_json")
+        if not isinstance(image_data, str) or not image_data:
+            return AIService.generate_profile_fallback_image(answers, achievements)
+
+        try:
+            return bytes.fromhex(image_data) if image_data.startswith("0x") else __import__("base64").b64decode(image_data)
+        except Exception:
+            return AIService.generate_profile_fallback_image(answers, achievements)
+
+    @staticmethod
+    def generate_profile_fallback_image(
+        answers: dict[str, str], achievements: list[str] | None = None
+    ) -> bytes:
+        """Generate a deterministic SVG portrait when AI image generation is unavailable."""
+        favorite_animal = (answers.get("favoriteAnimal") or "animal").strip()
+        favorite_color = (answers.get("favoriteColor") or "blue").strip()
+        favorite_season = (answers.get("favoriteSeason") or "spring").strip()
+        badge_text = ", ".join(achievements or []) or "new learner"
+        safe_color = favorite_color.lower().replace(" ", "-")
+        short_animal = favorite_animal.lower().replace(" ", "-")
+        short_season = favorite_season.lower().replace(" ", "-")
+
+        svg = f"""<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1024\" height=\"1024\" viewBox=\"0 0 1024 1024\">
+  <defs>
+    <linearGradient id=\"bg\" x1=\"0%\" x2=\"100%\" y1=\"0%\" y2=\"100%\">
+      <stop offset=\"0%\" stop-color=\"#0d1b2a\"/>
+      <stop offset=\"100%\" stop-color=\"#1d3557\"/>
+    </linearGradient>
+    <linearGradient id=\"accent\" x1=\"0%\" x2=\"100%\" y1=\"0%\" y2=\"100%\">
+      <stop offset=\"0%\" stop-color=\"{safe_color}\"/>
+      <stop offset=\"100%\" stop-color=\"#7bdff2\"/>
+    </linearGradient>
+  </defs>
+  <rect width=\"1024\" height=\"1024\" fill=\"url(#bg)\"/>
+  <circle cx=\"512\" cy=\"450\" r=\"220\" fill=\"url(#accent)\" opacity=\"0.18\"/>
+  <circle cx=\"512\" cy=\"360\" r=\"140\" fill=\"#f3f7ff\"/>
+  <path d=\"M390 388c25-118 224-118 249 0v90c-13 64-60 96-124 96-65 0-117-31-125-96z\" fill=\"#f6d7b0\"/>
+  <circle cx=\"450\" cy=\"355\" r=\"12\" fill=\"#1b263b\"/>
+  <circle cx=\"574\" cy=\"355\" r=\"12\" fill=\"#1b263b\"/>
+  <path d=\"M470 430c30 24 80 24 110 0\" stroke=\"#1b263b\" stroke-width=\"10\" stroke-linecap=\"round\" fill=\"none\"/>
+  <rect x=\"332\" y=\"600\" width=\"360\" height=\"180\" rx=\"32\" fill=\"rgba(255,255,255,0.09)\"/>
+  <text x=\"512\" y=\"650\" text-anchor=\"middle\" font-size=\"42\" fill=\"#eaf6ff\" font-family=\"Arial, sans-serif\">{favorite_animal}</text>
+  <text x=\"512\" y=\"700\" text-anchor=\"middle\" font-size=\"34\" fill=\"#dfeeff\" font-family=\"Arial, sans-serif\">{favorite_color}</text>
+  <text x=\"512\" y=\"748\" text-anchor=\"middle\" font-size=\"30\" fill=\"#b6ddff\" font-family=\"Arial, sans-serif\">{favorite_season}</text>
+  <text x=\"512\" y=\"830\" text-anchor=\"middle\" font-size=\"22\" fill=\"#9ae6ff\" font-family=\"Arial, sans-serif\">{badge_text}</text>
+  <circle cx=\"820\" cy=\"220\" r=\"56\" fill=\"#ffd166\" opacity=\"0.8\"/>
+  <circle cx=\"180\" cy=\"220\" r=\"36\" fill=\"#80ed99\" opacity=\"0.7\"/>
+  <text x=\"512\" y=\"118\" text-anchor=\"middle\" font-size=\"42\" fill=\"#d7ecff\" font-family=\"Arial, sans-serif\">{short_animal}</text>
+  <text x=\"512\" y=\"930\" text-anchor=\"middle\" font-size=\"24\" fill=\"#d7ecff\" font-family=\"Arial, sans-serif\">learning profile</text>
+</svg>"""
+        return svg.encode("utf-8")
+
+    @staticmethod
     def _request_completion(messages: list[dict[str, str]], api_key: str) -> str:
         if not api_key or not api_key.strip():
             raise ValueError("AI API key is required")

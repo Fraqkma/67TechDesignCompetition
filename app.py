@@ -275,6 +275,7 @@ def create_app(database_path: str | None = None) -> Flask:
                     db_store.add_exp(conn, user_id, -exp_to_remove)
             roadmap_payload = engine.build_roadmap_payload(current)
             attach_user_context(conn, user_id, current, roadmap_payload)
+            refresh_user_profile_portrait(user_id, conn)
             conn.commit()
             return {
                 "roadmap": roadmap_payload,
@@ -285,6 +286,57 @@ def create_app(database_path: str | None = None) -> Flask:
             raise
         finally:
             conn.close()
+
+    def refresh_user_profile_portrait(user_id: int, conn=None) -> bool:
+        """Refresh the stored profile portrait whenever profile answers or achievements change."""
+        owns_conn = conn is None
+        conn = conn or get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT favorite_animal, favorite_color, favorite_season
+                    FROM user_profiles
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+                profile = cur.fetchone()
+                if profile is None or any(value is None for value in profile):
+                    return False
+
+                animal, color, season = profile
+                cur.execute(
+                    "SELECT a.title FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = %s ORDER BY ua.unlocked_at",
+                    (user_id,),
+                )
+                achievements = [row[0] for row in cur.fetchall()]
+
+                prompt = AIService.build_profile_prompt(
+                    {
+                        "favoriteAnimal": animal,
+                        "favoriteColor": color,
+                        "favoriteSeason": season,
+                    },
+                    achievements,
+                )
+                image_bytes = AIService.generate_profile_image(
+                    {
+                        "favoriteAnimal": animal,
+                        "favoriteColor": color,
+                        "favoriteSeason": season,
+                    },
+                    achievements,
+                )
+                cur.execute(
+                    "UPDATE user_profiles SET profile_prompt = %s, profile_picture = %s, updated_at = NOW() WHERE user_id = %s",
+                    (prompt, image_bytes, user_id),
+                )
+            return True
+        finally:
+            if owns_conn and conn is not None:
+                conn.close()
 
     def validate_career_param(career_param: str | None) -> int | None:
         """Return a validated career id from the query string, if present."""
@@ -343,6 +395,27 @@ def create_app(database_path: str | None = None) -> Flask:
         if logged_in_user_id() is None:
             return redirect("/login")
         return render_template("profile.html")
+
+    @app.get("/onboarding")
+    def onboarding_page():
+        """Serve a first-login onboarding form."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return redirect("/login")
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT favorite_animal, favorite_color, favorite_season FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                profile = cur.fetchone()
+            if profile and all(value is not None for value in profile):
+                return redirect("/profile")
+            return render_template("onboarding.html")
+        finally:
+            conn.close()
 
     # =====================================================
     # Authentication
@@ -486,11 +559,28 @@ def create_app(database_path: str | None = None) -> Flask:
             session["uid"] = uid
             session["email"] = user_email
 
+            conn = get_db()
+            try:
+                db_store.ensure_schema(conn)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT favorite_animal, favorite_color, favorite_season FROM user_profiles WHERE user_id = %s",
+                        (user_id,),
+                    )
+                    profile = cur.fetchone()
+                if not profile or any(value is None for value in profile):
+                    redirect_path = "/onboarding"
+                else:
+                    redirect_path = "/roadmap"
+            finally:
+                conn.close()
+
             return success(
                 {
                     "id": user_id,
                     "uid": uid,
                     "email": user_email,
+                    "redirect": redirect_path,
                 },
                 "Login สำเร็จ",
             )
@@ -541,7 +631,12 @@ def create_app(database_path: str | None = None) -> Flask:
                     p.display_name,
                     p.level,
                     p.current_exp,
-                    p.current_career_id
+                    p.current_career_id,
+                    p.favorite_animal,
+                    p.favorite_color,
+                    p.favorite_season,
+                    p.profile_picture,
+                    p.profile_prompt
                 FROM users u
                 LEFT JOIN user_profiles p
                     ON p.user_id = u.id
@@ -568,7 +663,20 @@ def create_app(database_path: str | None = None) -> Flask:
                 level,
                 current_exp,
                 current_career_id,
+                favorite_animal,
+                favorite_color,
+                favorite_season,
+                profile_picture,
+                profile_prompt,
             ) = user
+
+            profile_image = None
+            if profile_picture:
+                import base64
+                image_prefix = "data:image/png;base64,"
+                if profile_picture.startswith(b"<svg"):
+                    image_prefix = "data:image/svg+xml;base64,"
+                profile_image = f"{image_prefix}{base64.b64encode(profile_picture).decode('ascii')}"
 
             return success(
                 {
@@ -579,6 +687,11 @@ def create_app(database_path: str | None = None) -> Flask:
                     "level": level,
                     "currentExp": current_exp,
                     "currentCareerId": current_career_id,
+                    "favoriteAnimal": favorite_animal,
+                    "favoriteColor": favorite_color,
+                    "favoriteSeason": favorite_season,
+                    "profileImage": profile_image,
+                    "profilePrompt": profile_prompt,
                 }
             )
 
@@ -608,10 +721,20 @@ def create_app(database_path: str | None = None) -> Flask:
 
         display_name = body.get("displayName")
         current_career_id = body.get("currentCareerId")
+        favorite_animal = body.get("favoriteAnimal")
+        favorite_color = body.get("favoriteColor")
+        favorite_season = body.get("favoriteSeason")
         if display_name is not None and (
             not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 80
         ):
             return error("displayName must be 1 to 80 characters")
+        for field_name, value in {
+            "favoriteAnimal": favorite_animal,
+            "favoriteColor": favorite_color,
+            "favoriteSeason": favorite_season,
+        }.items():
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                return error(f"{field_name} must be a non-empty string")
 
         if current_career_id is not None:
             if isinstance(current_career_id, str) and current_career_id.isdigit():
@@ -625,33 +748,64 @@ def create_app(database_path: str | None = None) -> Flask:
             finally:
                 conn.close()
 
-        if display_name is None and current_career_id is None:
-            return error("Provide displayName or currentCareerId")
+        if display_name is None and current_career_id is None and favorite_animal is None and favorite_color is None and favorite_season is None:
+            return error("Provide displayName, currentCareerId, or onboarding answers")
 
         conn = None
         try:
             conn = get_db()
             db_store.ensure_schema(conn)
             with conn.cursor() as cur:
+                profile_answers = {
+                    "favorite_animal": favorite_animal.strip() if isinstance(favorite_animal, str) else None,
+                    "favorite_color": favorite_color.strip() if isinstance(favorite_color, str) else None,
+                    "favorite_season": favorite_season.strip() if isinstance(favorite_season, str) else None,
+                }
                 cur.execute(
                     """
-                    INSERT INTO user_profiles (user_id, display_name, current_career_id)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO user_profiles (user_id, display_name, current_career_id, favorite_animal, favorite_color, favorite_season)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
                         display_name = COALESCE(EXCLUDED.display_name, user_profiles.display_name),
                         current_career_id = COALESCE(EXCLUDED.current_career_id, user_profiles.current_career_id),
+                        favorite_animal = COALESCE(EXCLUDED.favorite_animal, user_profiles.favorite_animal),
+                        favorite_color = COALESCE(EXCLUDED.favorite_color, user_profiles.favorite_color),
+                        favorite_season = COALESCE(EXCLUDED.favorite_season, user_profiles.favorite_season),
                         updated_at = NOW()
-                    RETURNING display_name, current_career_id
+                    RETURNING display_name, current_career_id, favorite_animal, favorite_color, favorite_season
                     """,
                     (
                         user_id,
                         display_name.strip() if isinstance(display_name, str) else None,
                         current_career_id,
+                        profile_answers["favorite_animal"],
+                        profile_answers["favorite_color"],
+                        profile_answers["favorite_season"],
                     ),
                 )
-                name, career_id = cur.fetchone()
+                name, career_id, animal, color, season = cur.fetchone()
+
+                achievement_names = []
+                cur.execute(
+                    "SELECT a.title FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = %s ORDER BY ua.unlocked_at",
+                    (user_id,),
+                )
+                for row in cur.fetchall():
+                    achievement_names.append(row[0])
+
+                profile_payload = {
+                    "favoriteAnimal": animal,
+                    "favoriteColor": color,
+                    "favoriteSeason": season,
+                }
+                prompt = AIService.build_profile_prompt(profile_payload, achievement_names)
+                image_bytes = AIService.generate_profile_image(profile_payload, achievement_names)
+                cur.execute(
+                    "UPDATE user_profiles SET profile_prompt = %s, profile_picture = %s, updated_at = NOW() WHERE user_id = %s",
+                    (prompt, image_bytes, user_id),
+                )
             conn.commit()
-            return success({"displayName": name, "currentCareerId": career_id}, "Profile updated")
+            return success({"displayName": name, "currentCareerId": career_id, "favoriteAnimal": animal, "favoriteColor": color, "favoriteSeason": season}, "Profile updated")
         except psycopg2.Error as exc:
             if conn is not None:
                 conn.rollback()
@@ -659,6 +813,108 @@ def create_app(database_path: str | None = None) -> Flask:
         finally:
             if conn is not None:
                 conn.close()
+
+    @app.get("/api/profile/onboarding")
+    def onboarding_status():
+        """Return whether the current user still needs the first-login onboarding form."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT favorite_animal, favorite_color, favorite_season, profile_picture IS NOT NULL FROM user_profiles WHERE user_id = %s",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+            if row is None:
+                return success({"required": True})
+            return success({"required": row[0] is None or row[1] is None or row[2] is None or row[3] is False})
+        finally:
+            conn.close()
+
+    @app.post("/api/profile/onboarding")
+    def onboarding_submit():
+        """Persist first-login personality answers and generate the profile portrait."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return error("Request body must be JSON")
+        answers = {
+            "favoriteAnimal": body.get("favoriteAnimal"),
+            "favoriteColor": body.get("favoriteColor"),
+            "favoriteSeason": body.get("favoriteSeason"),
+        }
+        for key, value in answers.items():
+            if not isinstance(value, str) or not value.strip():
+                return error(f"{key} must be a non-empty string")
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT a.title FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = %s ORDER BY ua.unlocked_at",
+                    (user_id,),
+                )
+                achievements = [row[0] for row in cur.fetchall()]
+            prompt = AIService.build_profile_prompt(answers, achievements)
+            image_bytes = AIService.generate_profile_image(answers, achievements)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, display_name, favorite_animal, favorite_color, favorite_season, profile_prompt, profile_picture)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        favorite_animal = EXCLUDED.favorite_animal,
+                        favorite_color = EXCLUDED.favorite_color,
+                        favorite_season = EXCLUDED.favorite_season,
+                        profile_prompt = EXCLUDED.profile_prompt,
+                        profile_picture = EXCLUDED.profile_picture,
+                        updated_at = NOW()
+                    RETURNING favorite_animal, favorite_color, favorite_season
+                    """,
+                    (
+                        user_id,
+                        (db_store.user_display_name(conn, user_id) or "Learner"),
+                        answers["favoriteAnimal"].strip(),
+                        answers["favoriteColor"].strip(),
+                        answers["favoriteSeason"].strip(),
+                        prompt,
+                        image_bytes,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return success({"favoriteAnimal": row[0], "favoriteColor": row[1], "favoriteSeason": row[2], "profilePrompt": prompt}, "Onboarding completed")
+        except psycopg2.Error as exc:
+            conn.rollback()
+            return error("Database connection failed", 500, str(exc))
+        finally:
+            conn.close()
+
+    @app.post("/api/profile/refresh")
+    def refresh_profile_portrait():
+        """Refresh the stored portrait using the current onboarding answers and achievements."""
+        user_id = logged_in_user_id()
+        if user_id is None:
+            return error("Login is required", 401)
+        conn = get_db()
+        try:
+            db_store.ensure_schema(conn)
+            refreshed = refresh_user_profile_portrait(user_id, conn)
+            conn.commit()
+            if not refreshed:
+                return error("Profile onboarding answers are not set yet", 400)
+            return success({"refreshed": True}, "Profile portrait refreshed")
+        except psycopg2.Error as exc:
+            conn.rollback()
+            return error("Database connection failed", 500, str(exc))
+        finally:
+            conn.close()
 
     # =====================================================
     # Logout
