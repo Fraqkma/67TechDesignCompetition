@@ -164,10 +164,14 @@ def create_app(database_path: str | None = None) -> Flask:
 
     app.config["JSON_SORT_KEYS"] = False
 
-    # Let browsers cache CSS/JS for a week.  In debug mode Flask overrides
-    # this with no-cache; the production launcher (waitress) runs without
-    # debug so the header is actually sent.
-    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 7
+    # Always revalidate CSS/JS with the server (ETag/Last-Modified still
+    # give a cheap 304 when unchanged) instead of trusting a long max-age
+    # blindly — a 7-day max-age meant browsers wouldn't even ask the server
+    # after a deploy, so fixes silently didn't show up for already-visited
+    # browsers until the cache expired. In debug mode Flask already forces
+    # no-cache; the production launcher (waitress) runs without debug so
+    # this value is what actually applies there.
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
     @app.after_request
     def compress_response(response):
