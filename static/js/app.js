@@ -380,7 +380,7 @@ function renderAchievements() {
       // Keep the God badge visual available while an already-running server
       // still returns catalog data created before the icon URL was seeded.
       const iconUrl = achievement.name === "God"
-        ? "/pignopic/god.png"
+        ? elements.achievementGrid.dataset.godIconUrl
         : achievement.iconUrl;
       const icon = iconUrl
         ? `<img class="achievement-img" src="${escapeHtml(iconUrl)}" alt="" loading="lazy">`
