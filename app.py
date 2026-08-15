@@ -1122,10 +1122,12 @@ def create_app(database_path: str | None = None) -> Flask:
         """Serve the learner's profile portrait with browser caching.
 
         The portrait is generated once per account and never changes, so the
-        browser can cache it and stop re-downloading the base64 data URL that
-        ``/api/me`` still carries for legacy surfaces.  Legacy SVG fallbacks
-        are not portraits and stay hidden here, matching the initials fallback
-        used everywhere else.
+        browser can cache it (revalidated via ETag) instead of re-downloading
+        the base64 data URL that ``/api/me`` still carries for legacy surfaces.
+        The URL is shared by every account, so the response is never stored
+        past revalidation: a different account on the same browser must always
+        receive its own portrait.  Legacy SVG fallbacks are not portraits and
+        stay hidden here, matching the initials fallback used everywhere else.
         """
         user_id = logged_in_user_id()
         if user_id is None:
@@ -1146,8 +1148,13 @@ def create_app(database_path: str | None = None) -> Flask:
             if mime_type is None or mime_type == "image/svg+xml":
                 return error("Profile picture is not a generated portrait", 404)
             etag = hashlib.md5(image_bytes).hexdigest()
+            # The URL is shared by every account, so the browser must always
+            # revalidate before reusing a cached portrait. Otherwise the next
+            # account logged in on the same browser keeps seeing the previous
+            # account's image for up to the old 24h freshness window. The ETag
+            # still gives same-account reloads a fast 304.
             headers = {
-                "Cache-Control": "private, max-age=86400",
+                "Cache-Control": "private, no-cache",
                 "ETag": f'"{etag}"',
             }
             if request.if_none_match.contains(etag):
