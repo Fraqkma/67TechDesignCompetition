@@ -41,7 +41,7 @@
  node_prerequisites       | ACTIVE     | db_store (load_database)            | 43
  achievements             | ACTIVE     | db_store (achievements)             | 4
  user_achievements        | ACTIVE     | db_store (achievements)             | 5
- ranks                    | ACTIVE     | db_store (load_rank)                | 4
+ ranks                    | ACTIVE     | db_store (load_rank)                | 5
  friendships              | ACH-READ   | db_store (load_user_stats)          | 2
  study_sessions           | ACH-READ   | db_store (load_user_stats)          | 2
  certificates             | UNUSED     | -                                   | 1
@@ -188,7 +188,9 @@
 - unlocked_at (TIMESTAMP)         : วันเวลาที่ปลดล็อก
 
 [TABLE: ranks]
-คำอธิบาย: (ตารางใหม่) ระดับ Rank ของผู้เรียน — seed อัตโนมัติ 4 ระดับ
+คำอธิบาย: (ตารางใหม่) ระดับ Rank ของผู้เรียน — seed อัตโนมัติ 5 ระดับ
+                      (01 Starter 0% / 02 Core Learner 25% / 03 System Builder 50%
+                       04 Career Ready 75% / 05 Career Master 100%)
 คอลัมน์:
 - id (BIGSERIAL, PK)      : รหัส Rank
 - code (VARCHAR)          : รหัสย่อ (01, 02, 03, 04)

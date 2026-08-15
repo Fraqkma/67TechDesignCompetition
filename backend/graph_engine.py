@@ -264,7 +264,11 @@ class GraphEngine:
     def calculate_progress(
         self, completed_ids: Iterable[str]
     ) -> dict[str, Any]:
-        """Calculate weighted career and subject progress percentages."""
+        """Calculate weighted career and subject progress percentages.
+
+        Every skill in the career counts toward the total, optional or not,
+        so 100% is only reached when the whole tree is completed.
+        """
 
         completed = self.clean_completed(completed_ids)
         total_weight = 0
@@ -273,9 +277,6 @@ class GraphEngine:
         subject_completed = {subject["id"]: 0 for subject in self.subjects}
 
         for skill in self.skills:
-            if not skill.get("required", True):
-                continue
-
             weight = int(skill.get("weight", 1))
             subject_id = skill["subjectId"]
             total_weight += weight
