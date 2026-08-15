@@ -14,6 +14,28 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  transform-origin: bottom left;
+  transition: transform 320ms ease, filter 320ms ease, opacity 320ms ease;
+}
+
+/* Tucked-away state while the visitor is still at the top of the page
+   (near the hero), so the mascot doesn't sit on top of the hero content
+   right on load. Scrolling down a bit (see ai-widget.js) removes this
+   class and the mascot eases in to full size/clarity. Hover, focus, or
+   actually opening the chat always shows it fully regardless of scroll
+   position, so it's never unreachable. */
+.ai-widget.is-minimized .ai-widget-collapsed {
+  transform: scale(0.5);
+  filter: blur(4px);
+  opacity: 0.5;
+}
+
+.ai-widget.is-minimized:hover .ai-widget-collapsed,
+.ai-widget.is-minimized:focus-within .ai-widget-collapsed,
+.ai-widget.is-minimized.is-open .ai-widget-collapsed {
+  transform: scale(1);
+  filter: none;
+  opacity: 1;
 }
 
 .ai-widget-label {
