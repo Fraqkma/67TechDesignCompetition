@@ -5,6 +5,7 @@
   "use strict";
   var container = document.getElementById("topbar-user");
   var nameEl = document.getElementById("user-display-name");
+  var profileImage = document.getElementById("user-profile-image");
   if (!container) return;
 
   fetch("/api/me", { credentials: "same-origin" })
@@ -12,6 +13,13 @@
     .then(function (body) {
       if (!body || !body.ok) return;
       if (nameEl) nameEl.textContent = body.data.displayName || body.data.email || "";
+      if (profileImage && body.data.profileImage && body.data.profileImageGenerated) {
+        // Per-account cache key: the URL is shared by every account, so the
+        // user id must bust the browser cache or another account's cached
+        // portrait could be shown here.
+        profileImage.src = "/api/profile/avatar?u=" + encodeURIComponent(body.data.id);
+        profileImage.removeAttribute("hidden");
+      }
       container.hidden = false;
     })
     .catch(function () {});
