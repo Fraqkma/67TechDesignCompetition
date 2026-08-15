@@ -421,7 +421,7 @@ CAREER_ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
     (102, "Noob", "Reach 25% progress in this career", "/pignopic/noob.png", '{"type":"career_progress","target":25}'),
     (103, "Pro", "Reach 50% progress in this career", "/pignopic/pro.png", '{"type":"career_progress","target":50}'),
     (104, "Hacker", "Reach 75% progress in this career", "/pignopic/hacker.png", '{"type":"career_progress","target":75}'),
-    (105, "God", "Complete 100% of this career", "", '{"type":"career_progress","target":100}'),
+    (105, "God", "Complete 100% of this career", "/pignopic/god.png", '{"type":"career_progress","target":100}'),
 ]
 
 

@@ -99,6 +99,7 @@ class AchievementDatabaseTests(unittest.TestCase):
     def test_catalog_has_icons_and_conditions(self) -> None:
         for achievement in self.achievements:
             self.assertTrue(achievement["condition"], achievement["name"])
+            self.assertTrue(achievement["iconUrl"], achievement["name"])
 
 
 if __name__ == "__main__":
