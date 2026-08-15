@@ -80,6 +80,39 @@ class ApiTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_session_user_id_accepts_string_values(self) -> None:
+        with self.client.session_transaction() as session:
+            session["user_id"] = str(self.user_id)
+
+        response = self.client.get("/api/me")
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["id"], self.user_id)
+
+    def test_register_returns_onboarding_redirect(self) -> None:
+        new_email = f"register-{uuid4().hex[:8]}@example.com"
+        new_password = "test-pass-1234"
+
+        response = self.client.post(
+            "/api/register",
+            json={"email": new_email, "password": new_password},
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["data"]["redirect"], "/onboarding")
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE email = %s", (new_email,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_health_endpoint(self) -> None:
         response = self.client.get("/api/health")
         payload = response.get_json()

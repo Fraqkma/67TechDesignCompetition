@@ -25,6 +25,7 @@ live in ``study_buddy_store.SOCIAL_SCHEMA_STATEMENTS``) on a fresh database.
 from __future__ import annotations
 
 import json
+import threading
 from collections import defaultdict
 from typing import Any
 
@@ -393,18 +394,29 @@ CAREER_ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
 
 
 def seed_achievements(conn) -> None:
-    """Insert the achievement catalog (idempotent).
+    """Ensure the achievement catalog matches the canonical seeded catalog.
 
-    Existing rows keep their title/description/icon; only an empty
-    ``condition`` is filled in so admin edits are not overwritten.
+    The app expects exactly four catalog rows. If the database was initialized
+    earlier with extra rows (from a previous draft or manual test seed), remove
+    the stale entries so the public contract stays stable and predictable.
     """
+    seed_ids = [achievement_id for achievement_id, _, _, _, _ in ACHIEVEMENT_SEEDS]
     with conn.cursor() as cur:
+        if seed_ids:
+            placeholders = ", ".join(["%s"] * len(seed_ids))
+            cur.execute(
+                f"DELETE FROM achievements WHERE id NOT IN ({placeholders})",
+                tuple(seed_ids),
+            )
         for achievement_id, title, description, icon_url, condition in ACHIEVEMENT_SEEDS:
             cur.execute(
                 """
                 INSERT INTO achievements (id, title, description, icon_url, condition)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    description = EXCLUDED.description,
+                    icon_url = EXCLUDED.icon_url,
                     condition = COALESCE(achievements.condition, EXCLUDED.condition)
                 """,
                 (achievement_id, title, description, icon_url, condition),
@@ -486,6 +498,23 @@ def seed_ranks(conn) -> None:
             )
 
 
+SCHEMA_LOCK = threading.RLock()
+
+
+def ensure_schema(conn) -> None:
+    """Create every table used by the app (idempotent).
+
+    PostgreSQL DDL acquires table locks, so schema bootstrapping is serialized
+    across requests to avoid deadlocks when multiple endpoints initialize the
+    database concurrently during startup or first-login flows.
+    """
+    with SCHEMA_LOCK:
+        with conn.cursor() as cur:
+            for statement in SCHEMA_STATEMENTS:
+                cur.execute(statement)
+        seed_achievements(conn)
+        seed_subjects_and_nodes(conn)
+        seed_ranks(conn)
 # =========================================================
 # Meme questions (catalog seed)
 # =========================================================
