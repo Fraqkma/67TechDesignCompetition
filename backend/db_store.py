@@ -7,12 +7,19 @@ single source of truth for:
   (the skill graph structure)
 - ``users`` / ``user_profiles`` / ``user_node_progress``
   (authentication and learner progress)
+- Social module (friendships, study groups, notifications, path shares)
+- World chat & meme modules (world_chat_messages, meme_questions,
+  user_meme_answers, study_frequency_memes, subject_memes)
 
 The catalog data (careers, nodes, subjects, prerequisites, achievements,
 ranks) lives in the database.  Only purely presentational fields that the
 roadmap UI needs (node position, level, difficulty, weight, estimated hours,
 short label) are derived deterministically from stored data so the frontend
 contract stays unchanged and the database stays the single source of truth.
+
+All DDL is consolidated here in ``SCHEMA_STATEMENTS`` so ``ensure_schema()``
+creates every table the app needs (including the social tables that used to
+live in ``study_buddy_store.SOCIAL_SCHEMA_STATEMENTS``) on a fresh database.
 """
 
 from __future__ import annotations
@@ -92,7 +99,8 @@ SCHEMA_STATEMENTS: list[str] = [
         level INTEGER NOT NULL DEFAULT 1,
         current_exp INTEGER NOT NULL DEFAULT 0,
         current_career_id BIGINT REFERENCES careers(id) ON DELETE SET NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        profile_picture BYTEA
     )
     """,
     """
@@ -153,6 +161,106 @@ SCHEMA_STATEMENTS: list[str] = [
         min_progress INTEGER NOT NULL DEFAULT 0
     )
     """,
+    # ---- Social module (friends, study groups, notifications, path shares) ----
+    """
+    CREATE TABLE IF NOT EXISTS study_groups (
+        id BIGSERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        career_id TEXT,
+        focus_node_id TEXT,
+        graph_career_id TEXT,
+        graph_focus_skill_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS study_group_members (
+        group_id BIGINT NOT NULL REFERENCES study_groups(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role VARCHAR(20) NOT NULL DEFAULT 'member',
+        joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (group_id, user_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS study_group_messages (
+        id BIGSERIAL PRIMARY KEY,
+        group_id BIGINT NOT NULL REFERENCES study_groups(id) ON DELETE CASCADE,
+        sender_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS buddy_notifications (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind VARCHAR(40) NOT NULL,
+        title VARCHAR(150) NOT NULL,
+        body TEXT NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS study_path_shares (
+        id BIGSERIAL PRIMARY KEY,
+        sender_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        receiver_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        career_id TEXT,
+        graph_career_id TEXT,
+        message TEXT,
+        snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    # ---- World chat & meme modules (new) ----
+    """
+    CREATE TABLE IF NOT EXISTS world_chat_messages (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS meme_questions (
+        id BIGSERIAL PRIMARY KEY,
+        question_text TEXT NOT NULL,
+        question_order INTEGER NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_meme_answers (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        question_id BIGINT NOT NULL REFERENCES meme_questions(id) ON DELETE CASCADE,
+        answer TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS study_frequency_memes (
+        id BIGSERIAL PRIMARY KEY,
+        title VARCHAR(150),
+        description TEXT,
+        image BYTEA,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS subject_memes (
+        id BIGSERIAL PRIMARY KEY,
+        title VARCHAR(150),
+        description TEXT,
+        image BYTEA,
+        subject_id BIGINT REFERENCES subjects(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
     # Migrations for databases created before these columns existed.
     """
     ALTER TABLE achievements ADD COLUMN IF NOT EXISTS condition TEXT
@@ -174,6 +282,30 @@ SCHEMA_STATEMENTS: list[str] = [
     """,
     """
     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS real_world TEXT NOT NULL DEFAULT '[]'
+    """,
+    """
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS profile_picture BYTEA
+    """,
+    """
+    ALTER TABLE study_groups ADD COLUMN IF NOT EXISTS graph_career_id TEXT
+    """,
+    """
+    ALTER TABLE study_groups ADD COLUMN IF NOT EXISTS graph_focus_skill_id TEXT
+    """,
+    """
+    ALTER TABLE study_path_shares ADD COLUMN IF NOT EXISTS graph_career_id TEXT
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_buddy_notifications_user_created
+    ON buddy_notifications (user_id, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_study_path_shares_receiver_created
+    ON study_path_shares (receiver_user_id, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_study_group_messages_group_created
+    ON study_group_messages (group_id, created_at DESC)
     """,
 ]
 
