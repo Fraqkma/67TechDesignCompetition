@@ -1,0 +1,77 @@
+/* Enlightenment Compass — shared back-button + brand row wrapper,
+   plus the full-bleed topbar treatment.
+   Loaded after style.css / cosmic-theme.css / each page's own inline
+   <style>, so equal-specificity rules here win by source order. */
+
+/* ---------- full-bleed topbar: bar stretches edge-to-edge, inner
+   content stays aligned to the page's normal content column ---------- */
+
+.topbar {
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+  padding: 0 28px;
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(1600px, 100%);
+  margin: 0 auto;
+}
+
+.topbar-start {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.back-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: 160ms ease;
+}
+
+.back-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(82, 214, 232, 0.08);
+  transform: translateY(-1px);
+}
+
+.back-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 620px) {
+  .back-button {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+/* ---------- connectivity status pill: bottom-right corner, small ---------- */
+
+.api-status {
+  position: fixed;
+  right: 16px;
+  bottom: 14px;
+  z-index: 5;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(7, 16, 25, 0.7);
+  backdrop-filter: blur(6px);
+  font-size: 10px;
+  opacity: 0.7;
+}

@@ -82,8 +82,22 @@ button {
   justify-content: space-between;
   min-height: 76px;
   border-bottom: 1px solid var(--border);
+}
+
+/* Glass blur lives on a pseudo-element (not directly on .topbar) so the
+   topbar itself does not establish a CSS containing block for
+   position:fixed descendants (backdrop-filter/filter/transform on an
+   ancestor traps fixed children instead of anchoring them to the
+   viewport) — needed for .api-status, which is pinned fixed to the
+   viewport's bottom-right corner while its markup stays inside .topbar. */
+.topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: rgba(7, 16, 25, 0.86);
   backdrop-filter: blur(18px);
+  pointer-events: none;
 }
 
 .brand {

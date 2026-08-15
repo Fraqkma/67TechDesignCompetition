@@ -1,0 +1,49 @@
+/* Enlightenment Compass — Nyan Cat comet, flies left-to-right across the
+   space background once per cycle. Sits behind all normal-flow page
+   content (same z-index tier as the starfield canvas, painted after it
+   in DOM order so it shows in front of the plain stars) — cards/topbar
+   above it already use backdrop-filter blur, so the comet is naturally
+   blurred whenever it passes underneath one, with no extra JS needed
+   for that part. Height (--fly-top) is randomized per cycle by
+   static/js/nyan-comet.js; direction and flight duration are fixed here. */
+
+.nyan-comet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nyan-comet {
+  position: absolute;
+  top: var(--fly-top, 30%);
+  left: 0;
+  height: 46px;
+  width: auto;
+  animation: nyan-fly 45s linear infinite;
+  -webkit-user-drag: none;
+  user-select: none;
+  will-change: transform;
+}
+
+@keyframes nyan-fly {
+  0% {
+    transform: translateX(-160px);
+  }
+
+  17% {
+    transform: translateX(calc(100vw + 160px));
+  }
+
+  100% {
+    transform: translateX(calc(100vw + 160px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nyan-comet {
+    animation: none;
+    display: none;
+  }
+}

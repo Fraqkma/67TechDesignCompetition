@@ -1,0 +1,137 @@
+/* Enlightenment Compass — floating AI teaching-assistant widget.
+   Reuses the existing #ai-summary/#ai-chat-box/#ai-question/#ask-ai-button
+   ids and ai.js behavior unchanged; only the surrounding layout is new. */
+
+.ai-widget {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 60;
+}
+
+.ai-widget-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-widget-label {
+  padding: 7px 18px;
+  border: 1px solid rgba(82, 214, 232, 0.5);
+  border-radius: 999px;
+  background: rgba(82, 214, 232, 0.12);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  box-shadow: 0 0 18px rgba(82, 214, 232, 0.35);
+}
+
+.ai-widget-avatar-button {
+  flex: none;
+  display: grid;
+  grid-template-rows: 100%;
+  place-items: center;
+  height: 233px;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  cursor: pointer;
+  transition: transform 160ms ease;
+}
+
+.ai-widget-avatar-button:hover,
+.ai-widget:focus-within .ai-widget-avatar-button {
+  transform: translateY(-4px);
+}
+
+.ai-widget-avatar {
+  display: block;
+  height: 100%;
+  width: auto;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.35));
+}
+
+.ai-widget-bubble {
+  display: none;
+}
+
+.ai-widget-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  width: min(340px, calc(100vw - 40px));
+  max-height: 0;
+  padding: 0 18px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(13, 25, 36, 0.94);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(12px);
+  transition: max-height 220ms ease, opacity 200ms ease, transform 200ms ease, padding 220ms ease;
+  pointer-events: none;
+}
+
+.ai-widget:hover .ai-widget-panel,
+.ai-widget:focus-within .ai-widget-panel,
+.ai-widget.is-open .ai-widget-panel {
+  max-height: min(70vh, 560px);
+  padding: 18px;
+  overflow: auto;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.ai-widget-panel-header {
+  margin-bottom: 12px;
+}
+
+.ai-widget-panel .ai-chat-box {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 1180px) {
+  /* Below this width .workspace stacks to a single column (style.css),
+     so the fixed-position widget can otherwise sit on top of the
+     stacked insight cards (Achievements, etc.) as the user scrolls.
+     Shrink the mascot a bit and reserve bottom space in <main> so the
+     last stacked card always has room to scroll clear of the widget. */
+  .ai-widget-avatar-button {
+    height: 170px;
+  }
+
+  .roadmap-page main {
+    padding-bottom: 230px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ai-widget {
+    left: 14px;
+    bottom: 14px;
+  }
+
+  .ai-widget-avatar-button {
+    height: 165px;
+  }
+
+  .ai-widget-label {
+    padding: 5px 14px;
+    font-size: 12px;
+  }
+
+  .ai-widget-bubble {
+    max-width: 160px;
+  }
+}
