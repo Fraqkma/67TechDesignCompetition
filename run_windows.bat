@@ -16,4 +16,4 @@ REM Start the local server at http://127.0.0.1:5000
 echo [3/3] Starting SkillGraph...
 python app.py
 
-endlocal
+pause
