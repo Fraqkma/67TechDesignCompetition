@@ -13,7 +13,9 @@
     .then(function (body) {
       if (!body || !body.ok) return;
       if (nameEl) nameEl.textContent = body.data.displayName || body.data.email || "";
-      if (profileImage && body.data.profileImage && body.data.profileImageGenerated) {
+      // Show any stored portrait (including legacy SVG fallbacks) so the
+      // topbar chip always reflects the account's picture when one exists.
+      if (profileImage && body.data.profileImage) {
         // Per-account cache key: the URL is shared by every account, so the
         // user id must bust the browser cache or another account's cached
         // portrait could be shown here.

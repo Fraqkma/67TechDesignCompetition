@@ -1130,8 +1130,8 @@ def create_app(database_path: str | None = None) -> Flask:
         the base64 data URL that ``/api/me`` still carries for legacy surfaces.
         The URL is shared by every account, so the response is never stored
         past revalidation: a different account on the same browser must always
-        receive its own portrait.  Legacy SVG fallbacks are not portraits and
-        stay hidden here, matching the initials fallback used everywhere else.
+        receive its own portrait.  Legacy SVG fallbacks are served too so the
+        topbar shows whatever portrait the account has stored.
         """
         user_id = logged_in_user_id()
         if user_id is None:
@@ -1149,8 +1149,8 @@ def create_app(database_path: str | None = None) -> Flask:
                 return error("Profile picture not set", 404)
             image_bytes = bytes(row[0])
             mime_type = AIService.profile_image_mime_type(image_bytes)
-            if mime_type is None or mime_type == "image/svg+xml":
-                return error("Profile picture is not a generated portrait", 404)
+            if mime_type is None:
+                return error("Profile picture is not a supported image", 404)
             etag = hashlib.md5(image_bytes).hexdigest()
             # The URL is shared by every account, so the browser must always
             # revalidate before reusing a cached portrait. Otherwise the next
