@@ -7,8 +7,8 @@ if not exist ".venv\Scripts\python.exe" (
     py -m venv .venv
 )
 
-REM Install all project dependencies inside the isolated environment.
-echo [2/3] Installing project dependencies...
+REM Install Flask inside this project so it does not affect global Python.
+echo [2/3] Installing required package...
 call .venv\Scripts\activate.bat
 python -m pip install -r requirements.txt
 

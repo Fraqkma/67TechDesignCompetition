@@ -6,6 +6,8 @@ venv/
 
 # Secrets and local environment configuration
 .env
+.env.*
+!.env.example
 
 # Test and editor files
 .pytest_cache/
