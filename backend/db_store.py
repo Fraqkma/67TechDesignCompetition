@@ -378,10 +378,9 @@ def profile_image_data_url(image: Any) -> str | None:
 
 # ``condition`` is a JSON rule evaluated against user data so the unlock
 # logic stays machine-readable while the catalog itself lives in the DB.
-# Unlock data sources: completed skill count (user_node_progress), EXP
-# (user_profiles.current_exp), friends (friendships), study rooms
-# (study_sessions).  Social features are not built yet, so those two
-# achievements stay locked until the features exist.
+# Unlock data sources: completed skill count, EXP, accepted friendships, and
+# hosted study sessions. These conditions are evaluated from persisted data;
+# AI never decides whether an achievement is unlocked.
 ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
     (
         1,
@@ -428,11 +427,17 @@ CAREER_ACHIEVEMENT_SEEDS: list[tuple[int, str, str, str, str]] = [
 def seed_achievements(conn) -> None:
     """Ensure the achievement catalog matches the canonical seeded catalog.
 
-    The app expects exactly four catalog rows. If the database was initialized
-    earlier with extra rows (from a previous draft or manual test seed), remove
-    the stale entries so the public contract stays stable and predictable.
+    If an earlier database contains stale draft rows, remove only IDs outside
+    both current seed groups. Including career achievement IDs in ``seed_ids``
+    is important because deleting and recreating them would cascade-delete the
+    learner's ``user_achievements`` history on every process restart.
     """
-    seed_ids = [achievement_id for achievement_id, _, _, _, _ in ACHIEVEMENT_SEEDS]
+    seed_ids = [
+        achievement_id
+        for achievement_id, _, _, _, _ in (
+            ACHIEVEMENT_SEEDS + CAREER_ACHIEVEMENT_SEEDS
+        )
+    ]
     with conn.cursor() as cur:
         if seed_ids:
             placeholders = ", ".join(["%s"] * len(seed_ids))
@@ -605,6 +610,11 @@ def ensure_schema(conn) -> None:
         seed_subjects_and_nodes(conn)
         seed_ranks(conn)
         seed_meme_questions(conn)
+        # Schema creation is an application bootstrap transaction, separate
+        # from the route's later read/write transaction. Without this commit,
+        # read-only routes return their connection to the pool with rollback(),
+        # while the process-level flag incorrectly claims initialization stuck.
+        conn.commit()
         _schema_initialized = True
 
 
